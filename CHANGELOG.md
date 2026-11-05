@@ -1,0 +1,49 @@
+# Changelog
+
+Todas as mudanças relevantes deste projeto são registradas aqui.
+O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
+e o projeto usa versionamento semântico.
+
+## [1.1.0] - 2026-11-05
+
+### Adicionado
+
+- Modo **segundo plano**: captura do Fortnite encoberto com `PrintWindow` e
+  `PW_RENDERFULLCONTENT`, sem trazer o jogo para a frente.
+- **Foco rápido** (~1 s) para cliques e teclas, com restauração da janela em
+  primeiro plano e da posição do cursor.
+- Botão **Manter PC acordado**, com gerenciamento de motivos (`manual` e
+  `bot`) e prevenção de suspensão/desligamento de tela por inatividade.
+- Interface em **modo escuro**, barra de título escura no Windows 11,
+  diálogos próprios e botão para limpar o registro.
+- Identidade visual: logo, banner, social preview e ícone do aplicativo.
+- Documentação completa de instalação, uso, configuração e solução de
+  problemas.
+- Workflow de testes no GitHub Actions.
+
+### Alterado
+
+- Captura em segundo plano é o padrão; o modo primeiro plano continua
+  disponível na interface.
+- O bot não rouba o foco periodicamente durante a partida no modo segundo
+  plano.
+- Mensagens de erro de captura são mais claras e incluem janela minimizada.
+- Autoteste cobre captura em segundo plano, energia e imagens negativas.
+
+### Corrigido
+
+- Registro do atalho global F8 com a API nativa do Windows.
+- Falsos positivos do banner do lobby.
+- Barra de título permanecia clara por aplicar o tema antes da janela existir.
+
+## [1.0.0] - 2026-11-05
+
+### Adicionado
+
+- Primeira versão funcional do farm AFK.
+- Leitura incremental do `FortniteGame.log` e máquina de estados
+  lobby → matchmaking → partida → pós-partida → lobby.
+- Detecção visual do token Pirate Shop com OpenCV e validação de cor.
+- Clique em JOGAR, CONTINUAR JOGANDO e CLAIM ALL.
+- Atalho F8, modo simulação, logs, capturas e arquivo
+  `TOKEN_ENCONTRADO.txt`.
