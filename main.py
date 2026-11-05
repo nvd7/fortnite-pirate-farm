@@ -636,7 +636,12 @@ class PirateFarmApp:
         if not confirm:
             dialog.bind("<Return>", lambda _event: close(True))
         self._center_dialog(dialog)
+        dialog.bind(
+            "<FocusIn>",
+            lambda _event: self._apply_dark_titlebar(dialog),
+        )
         dialog.after(80, lambda: self._apply_dark_titlebar(dialog))
+        dialog.after(600, lambda: self._apply_dark_titlebar(dialog))
         dialog.wait_window()
         return resultado["ok"]
 
