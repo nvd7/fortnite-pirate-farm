@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import queue
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -18,6 +19,7 @@ from piratebot.config import ASSETS, LOGS, load_config
 from piratebot.logwatcher import LogEvent, LogWatcher, parse_line, player_key
 from piratebot.squad import SquadTracker
 from piratebot.vision import TokenDetector, imread_u, imwrite_u
+from tools.check_docs import check_file
 from tools.check_postmatch import inspect_frame
 
 TEST_ASSETS = ASSETS / "test"
@@ -646,6 +648,44 @@ def main() -> int:
             f"Evento {expected_kind}/{expected_value or '-'}",
             ok,
             f"obtido {event.kind}/{event.value}" if event else "nenhum evento",
+        )
+
+    print()
+    print("Documentação (links relativos):")
+    with tempfile.TemporaryDirectory() as temp:
+        base = Path(temp)
+        docs = base / "docs"
+        docs.mkdir()
+        (docs / "guia.md").write_text("# Guia\n", encoding="utf-8")
+        readme = base / "README.md"
+        readme.write_text(
+            "[Guia](docs/guia.md)\n"
+            "[Raiz](/docs/guia.md)\n"
+            "[Externo](https://example.com)\n"
+            "[Âncora](#secao)\n"
+            "[Quebrado](docs/ausente.md)\n"
+            "```markdown\n"
+            "[Exemplo](docs/ausente.md)\n"
+            "```\n",
+            encoding="utf-8",
+        )
+        issues = check_file(readme, base)
+        check(
+            "Verificador encontra link relativo quebrado",
+            len(issues) == 1
+            and issues[0].target == "docs/ausente.md"
+            and issues[0].line == 5,
+            f"issues={issues}",
+        )
+        check(
+            "Verificador aceita links relativos e da raiz",
+            all(issue.target != "docs/guia.md" for issue in issues),
+        )
+        check(
+            "Verificador ignora link externo, âncora e bloco de código",
+            all(issue.target not in ("https://example.com", "#secao") for issue in issues)
+            and len(issues) == 1,
+            f"issues={issues}",
         )
 
     print()
