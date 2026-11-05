@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Dúvidas de instalação e uso
+    url: https://github.com/nvd7/fortnite-pirate-farm#solução-de-problemas
+    about: Confira o README e a seção de solução de problemas antes de abrir uma issue.

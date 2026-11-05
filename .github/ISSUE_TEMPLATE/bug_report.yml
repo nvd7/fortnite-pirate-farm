@@ -1,0 +1,85 @@
+name: Relatar um problema
+description: Encontrou um bug, falso positivo ou falha de captura?
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por reportar. Antes de enviar, rode o autoteste e confira se já
+        existe uma issue parecida. **Não anexe dados pessoais, tokens de conta ou
+        capturas com informações sensíveis.**
+
+  - type: textarea
+    id: descricao
+    attributes:
+      label: O que aconteceu?
+      description: Descreva o comportamento observado e o que você esperava.
+      placeholder: "Ex.: o bot não encontrou o botão JOGAR depois de voltar ao lobby."
+    validations:
+      required: true
+
+  - type: textarea
+    id: passos
+    attributes:
+      label: Passos para reproduzir
+      placeholder: |
+        1. Abra o Fortnite em janela sem borda
+        2. Selecione Squad + Fill
+        3. Clique em INICIAR
+        4. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: modo
+    attributes:
+      label: Modo de execução
+      options:
+        - Segundo plano
+        - Primeiro plano
+        - Simulação
+        - Testar detecção agora
+    validations:
+      required: true
+
+  - type: input
+    id: ambiente
+    attributes:
+      label: Ambiente
+      description: Windows, versão do Python, resolução e modo de vídeo do Fortnite.
+      placeholder: "Windows 11 24H2 · Python 3.12 · 1920x1080 · janela sem borda"
+    validations:
+      required: true
+
+  - type: textarea
+    id: selftest
+    attributes:
+      label: Resultado do autoteste
+      description: Cole a saída de `.venv\Scripts\python.exe selftest.py`.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs e capturas
+      description: |
+        Anexe o trecho relevante de `logs\piratefarm_*.log` e, se for um problema
+        visual, a captura de `logs\snapshots\` ou `logs\teste_tela.png`.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmacoes
+    attributes:
+      label: Confirmações
+      options:
+        - label: O Fortnite estava em janela sem borda e não minimizado.
+          required: true
+        - label: Removi dados pessoais das capturas e dos logs.
+          required: true
+        - label: Li a seção de solução de problemas do README.
+          required: true
