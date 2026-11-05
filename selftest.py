@@ -6,14 +6,18 @@ Uso:
 """
 from __future__ import annotations
 
+import queue
 import sys
+import threading
 import time
 from pathlib import Path
 
 from piratebot import power
+from piratebot.bot import Phase, PirateBot
 from piratebot.config import ASSETS, LOGS, load_config
-from piratebot.logwatcher import LogWatcher, parse_line
-from piratebot.vision import TokenDetector, imread_u
+from piratebot.logwatcher import LogEvent, LogWatcher, parse_line, player_key
+from piratebot.squad import SquadTracker
+from piratebot.vision import TokenDetector, imread_u, imwrite_u
 
 TEST_ASSETS = ASSETS / "test"
 
@@ -38,6 +42,42 @@ def check(name: str, condition: bool, detail: str = "") -> None:
     status = "OK  " if condition else "FALHA"
     suffix = f" — {detail}" if detail else ""
     print(f"[{status}] {name}{suffix}")
+
+
+class RecordingController:
+    """Controlador falso para testar cliques sem tocar no jogo."""
+
+    def __init__(self) -> None:
+        self.clicks: list[tuple[int, int]] = []
+        self.enter = 0
+        self.space = 0
+        self.escapes = 0
+
+    def click_client(self, x: int, y: int) -> bool:
+        self.clicks.append((int(x), int(y)))
+        return True
+
+    def click_ref(self, x: int, y: int) -> bool:
+        self.clicks.append((int(x), int(y)))
+        return True
+
+    def press_enter(self) -> bool:
+        self.enter += 1
+        return True
+
+    def press_space(self) -> bool:
+        self.space += 1
+        return True
+
+    def press_escape(self) -> bool:
+        self.escapes += 1
+        return True
+
+    def focus_if_needed(self) -> bool:
+        return True
+
+    def ensure_foreground(self, force: bool = False) -> bool:
+        return True
 
 
 def main() -> int:
@@ -143,6 +183,321 @@ def main() -> int:
             f"score={hit.score:.2f}" if hit else "limpo",
         )
 
+    print()
+    print("Menu de saída (seta no canto superior direito):")
+    if detector.exit_icon is None:
+        check("Template da seta de saída", False, "assets/exit_icon.png não encontrado")
+    else:
+        import numpy as np
+
+        icon = detector.exit_icon
+        canvas = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        x, y = 1660, 50
+        canvas[y : y + icon.shape[0], x : x + icon.shape[1]] = icon
+        hit = detector.find_exit_button(canvas)
+        check(
+            "Seta de saída em tela sintética",
+            hit is not None
+            and abs(hit.x - x) <= 2
+            and abs(hit.y - y) <= 2,
+            f"score={hit.score:.2f} em ({hit.x},{hit.y})" if hit else "não encontrada",
+        )
+
+        for name, image in (
+            ("lobby", lobby),
+            ("suspensão", suspended),
+            ("desktop", desktop),
+        ):
+            if image is None:
+                continue
+            hit = detector.find_exit_button(image)
+            check(
+                f"Sem falso positivo da seta no {name}",
+                hit is None,
+                f"score={hit.score:.2f} em ({hit.x},{hit.y})" if hit else "limpo",
+            )
+
+    print()
+    print("Botão de retorno ao lobby (tela de resumo):")
+    if detector.return_lobby is None:
+        check(
+            "Template RETORNAR AO LOBBY",
+            False,
+            "assets/return_lobby.png não encontrado",
+        )
+    else:
+        import numpy as np
+
+        template = detector.return_lobby
+        canvas = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        x, y = 1338, 414
+        canvas[y : y + template.shape[0], x : x + template.shape[1]] = template
+        hit = detector.find_return_lobby_button(canvas)
+        check(
+            "Botão RETORNAR AO LOBBY em tela sintética",
+            hit is not None
+            and abs(hit.x - x) <= 2
+            and abs(hit.y - y) <= 2,
+            f"score={hit.score:.2f} em ({hit.x},{hit.y})" if hit else "não encontrado",
+        )
+        for name, image in (
+            ("lobby", lobby),
+            ("suspensão", suspended),
+            ("desktop", desktop),
+        ):
+            if image is None:
+                continue
+            hit = detector.find_return_lobby_button(image)
+            check(
+                f"Sem falso positivo do retorno no {name}",
+                hit is None,
+                f"score={hit.score:.2f} em ({hit.x},{hit.y})" if hit else "limpo",
+            )
+
+    print()
+    print("Botão JOGAR NOVAMENTE (tela de resumo):")
+    if detector.play_again is None:
+        check(
+            "Template JOGAR NOVAMENTE",
+            False,
+            "assets/play_again.png não encontrado",
+        )
+    else:
+        template = detector.play_again
+        canvas = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        x, y = 1338, 502
+        canvas[y : y + template.shape[0], x : x + template.shape[1]] = template
+        hit = detector.find_play_again_button(canvas)
+        check(
+            "Botão JOGAR NOVAMENTE em tela sintética",
+            hit is not None
+            and abs(hit.x - x) <= 2
+            and abs(hit.y - y) <= 2,
+            f"score={hit.score:.2f} em ({hit.x},{hit.y})" if hit else "não encontrado",
+        )
+        for name, image in (
+            ("lobby", lobby),
+            ("suspensão", suspended),
+            ("desktop", desktop),
+        ):
+            if image is None:
+                continue
+            hit = detector.find_play_again_button(image)
+            check(
+                f"Sem falso positivo do JOGAR NOVAMENTE no {name}",
+                hit is None,
+                f"score={hit.score:.2f} em ({hit.x},{hit.y})" if hit else "limpo",
+            )
+
+    print()
+    print("Botão Voltar ao Lobby (menu de pausa novo):")
+    if detector.voltar_lobby is None:
+        check(
+            "Template Voltar ao Lobby",
+            False,
+            "assets/voltar_lobby.png não encontrado",
+        )
+    else:
+        template = detector.voltar_lobby
+        canvas = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        x, y = 1287, 146
+        canvas[y : y + template.shape[0], x : x + template.shape[1]] = template
+        hit = detector.find_voltar_lobby_button(canvas)
+        check(
+            "Botão Voltar ao Lobby em tela sintética",
+            hit is not None
+            and abs(hit.x - x) <= 2
+            and abs(hit.y - y) <= 2,
+            f"score={hit.score:.2f} em ({hit.x},{hit.y})" if hit else "não encontrado",
+        )
+        for name, image in (
+            ("lobby", lobby),
+            ("suspensão", suspended),
+            ("desktop", desktop),
+        ):
+            if image is None:
+                continue
+            hit = detector.find_voltar_lobby_button(image)
+            check(
+                f"Sem falso positivo do Voltar ao Lobby no {name}",
+                hit is None,
+                f"score={hit.score:.2f} em ({hit.x},{hit.y})" if hit else "limpo",
+            )
+
+    print()
+    print("Pós-partida: clique visual, sem ENTER/ESPAÇO:")
+    summary = None
+    if detector.return_lobby is not None and detector.play_again is not None:
+        summary = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        summary[414:470, 1338:1814] = detector.return_lobby
+        summary[502:558, 1338:1814] = detector.play_again
+
+    def postmatch_bot(token_found: bool) -> PirateBot:
+        fake = PirateBot(
+            config,
+            queue.Queue(),
+            threading.Event(),
+            threading.Event(),
+        )
+        fake.phase = Phase.POSTMATCH
+        fake.matches = 1
+        fake._counted_match = True
+        fake.token_found = token_found
+        fake._endgame_at = time.time() - 10.0
+        fake._next_scan_at = time.time() + 999.0
+        fake._clicked_postmatch_at = 0.0
+        fake._detector = detector
+        fake._controller = RecordingController()
+        fake._capture = lambda *args, **kwargs: summary
+        return fake
+
+    if summary is not None:
+        bot_postmatch = postmatch_bot(False)
+        bot_postmatch._do_postmatch(time.time())
+        check(
+            "Pós-partida clica em JOGAR NOVAMENTE",
+            bot_postmatch._controller.clicks == [(1576, 530)]
+            and bot_postmatch._controller.enter == 0
+            and bot_postmatch._controller.space == 0,
+            f"cliques={bot_postmatch._controller.clicks}",
+        )
+
+        bot_token = postmatch_bot(True)
+        bot_token._do_postmatch(time.time())
+        check(
+            "Com token, pós-partida clica em RETORNAR AO LOBBY",
+            bot_token._controller.clicks == [(1576, 442)]
+            and bot_token._controller.enter == 0
+            and bot_token._controller.space == 0,
+            f"cliques={bot_token._controller.clicks}",
+        )
+    else:
+        check(
+            "Templates do resumo disponíveis",
+            False,
+            "return_lobby.png e play_again.png são necessários",
+        )
+
+    print()
+    print("Pós-partida sem resumo (último sobrevivente):")
+    if detector.voltar_lobby is None:
+        check(
+            "Template Voltar ao Lobby disponível",
+            False,
+            "assets/voltar_lobby.png não encontrado",
+        )
+    else:
+        empty_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        menu_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        menu_frame[146:198, 1287:1843] = detector.voltar_lobby
+
+        bot_last = PirateBot(
+            config,
+            queue.Queue(),
+            threading.Event(),
+            threading.Event(),
+        )
+        bot_last.phase = Phase.POSTMATCH
+        bot_last.matches = 1
+        bot_last._counted_match = True
+        bot_last._endgame_at = time.time() - 20.0
+        bot_last._next_scan_at = time.time() + 999.0
+        bot_last._detector = detector
+        bot_last._controller = RecordingController()
+        bot_last._capture = lambda *args, **kwargs: empty_frame
+        bot_last._do_postmatch(time.time())
+        check(
+            "Sem resumo, pós-partida abre o menu com ESC",
+            bot_last._controller.escapes == 1
+            and bot_last._controller.clicks == []
+            and bot_last._controller.enter == 0
+            and bot_last._controller.space == 0,
+            f"esc={bot_last._controller.escapes} cliques={bot_last._controller.clicks}",
+        )
+
+        bot_last._capture = lambda *args, **kwargs: menu_frame
+        bot_last._do_postmatch(time.time())
+        check(
+            "Com o menu aberto, clica em Voltar ao Lobby",
+            bot_last._controller.clicks == [(1565, 172)]
+            and bot_last._controller.enter == 0
+            and bot_last._controller.space == 0,
+            f"cliques={bot_last._controller.clicks}",
+        )
+
+    print()
+    print("Saída da partida pelo menu novo:")
+    menu = None
+    if detector.voltar_lobby is not None:
+        menu = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        menu[146:198, 1287:1843] = detector.voltar_lobby
+    if menu is not None:
+        def leave_bot() -> PirateBot:
+            bot_leave = PirateBot(
+                config,
+                queue.Queue(),
+                threading.Event(),
+                threading.Event(),
+            )
+            bot_leave.phase = Phase.MATCH
+            bot_leave._detector = detector
+            bot_leave._controller = RecordingController()
+            bot_leave._grabber = object()
+            bot_leave._squad_leave_due_at = time.time() + 30.0
+            bot_leave._next_scan_at = time.time() + 999.0
+            return bot_leave
+
+        bot_leave = leave_bot()
+        bot_leave._capture = lambda *args, **kwargs: menu
+        bot_leave._attempt_leave_match()
+        check(
+            "Menu já aberto: clica em Voltar ao Lobby sem ESC",
+            bot_leave._controller.clicks == [(1565, 172)]
+            and bot_leave._controller.escapes == 0
+            and bot_leave._leave_button_clicked,
+            f"cliques={bot_leave._controller.clicks} esc={bot_leave._controller.escapes}",
+        )
+
+        bot_leave_closed = leave_bot()
+        empty_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        frames = [empty_frame, menu]
+        bot_leave_closed._capture = (
+            lambda *args, **kwargs: frames.pop(0) if frames else menu
+        )
+        bot_leave_closed._attempt_leave_match()
+        check(
+            "Menu fechado: abre com ESC e clica em Voltar ao Lobby",
+            bot_leave_closed._controller.clicks == [(1565, 172)]
+            and bot_leave_closed._controller.escapes == 1
+            and bot_leave_closed._leave_button_clicked,
+            f"cliques={bot_leave_closed._controller.clicks} "
+            f"esc={bot_leave_closed._controller.escapes}",
+        )
+    else:
+        check(
+            "Template Voltar ao Lobby disponível",
+            False,
+            "assets/voltar_lobby.png não encontrado",
+        )
+
+    bot_transition = PirateBot(
+        config,
+        queue.Queue(),
+        threading.Event(),
+        threading.Event(),
+    )
+    bot_transition.phase = Phase.POSTMATCH
+    bot_transition.matches = 1
+    bot_transition._counted_match = True
+    bot_transition._handle_event(
+        LogEvent("state", "match", "", time.time())
+    )
+    check(
+        "Partida seguinte ao resumo é contabilizada",
+        bot_transition.phase == Phase.MATCH and bot_transition.matches == 2,
+        f"fase={bot_transition.phase.value} partidas={bot_transition.matches}",
+    )
+
     false_positive = LOGS / "snapshots" / "token_banner_20261105_160659.png"
     if false_positive.exists():
         print()
@@ -226,6 +581,12 @@ def main() -> int:
             "player_died",
             "",
         ),
+        (
+            "[2026.11.05-20.35.01:008][378]LogSpectateAfterDeathViewTarget: "
+            "[7a6b] [Player]  No teammates available to follow",
+            "no_teammates",
+            "",
+        ),
     ]
     for line, expected_kind, expected_value in samples:
         event = parse_line(line)
@@ -239,6 +600,166 @@ def main() -> int:
             ok,
             f"obtido {event.kind}/{event.value}" if event else "nenhum evento",
         )
+
+    print()
+    print("Preenchimentos (fills) na partida:")
+    squad_samples = [
+        (
+            "[2026.11.05-19.17.31:450][422]LogSocialChatManager: [3b5d] "
+            "[00007FF134B21540] ChannelName:BR.Any.b4d1109c873540edb3dec4d9ec88f7d1.6 "
+            "Conversation:[07fE7lvGWdOflOOjFb2fnh02] with 2 players",
+            "match_chat",
+            "07fE7lvGWdOflOOjFb2fnh02",
+        ),
+        (
+            "[2026.11.05-19.18.10:571][572]LogSocialChatManager: [3ba6] "
+            "[00007FF134B21540] Conversation:[07fE7lvGWdOflOOjFb2fnh02] "
+            "PlayerAdded:MCP:e3446...6269d",
+            "squad_join",
+            "07fE7lvGWdOflOOjFb2fnh02|e3446...6269d",
+        ),
+        (
+            "[2026.11.05-19.21.41:512][897]LogSocialChatManager: [3bda] "
+            "[00007FF134B21540] Conversation:[07fE7lvGWdOflOOjFb2fnh02] "
+            "PlayerRemoved:MCP:004b4...374e1",
+            "squad_leave",
+            "07fE7lvGWdOflOOjFb2fnh02|004b4...374e1",
+        ),
+        (
+            "[2026.11.05-14.46.12:439][568]LogFort: Display: SetHasFinishedLoading "
+            "bHasClientFinishedLoading: 0 bInHasFinishedLoading: 1 "
+            "Player: MCP:1b70c848f15d48f78a9d48144aeedb56",
+            "local_player",
+            "1b70c...edb56",
+        ),
+    ]
+    for line, expected_kind, expected_value in squad_samples:
+        event = parse_line(line)
+        ok = (
+            event is not None
+            and event.kind == expected_kind
+            and event.value == expected_value
+        )
+        check(
+            f"Evento {expected_kind}",
+            ok,
+            f"obtido {event.kind}/{event.value}" if event else "nenhum evento",
+        )
+
+    check(
+        "ID completo normalizado",
+        player_key("004b43b61c2647cc99e410712fa374e1") == "004b4...374e1",
+        player_key("004b43b61c2647cc99e410712fa374e1"),
+    )
+
+    tracker = SquadTracker()
+    check("Canal da partida identificado", tracker.on_match_chat("conv"))
+    tracker.on_player_join("conv", "004b4...374e1")
+    tracker.on_player_join("conv", "e3446...6269d")
+    tracker.on_player_join("conv", "9e23f...4b43c")
+    check(
+        "Três preenchimentos rastreados",
+        len(tracker.players) == 3 and not tracker.empty,
+        f"{len(tracker.players)} na lista",
+    )
+    check(
+        "Jogador local identificado",
+        tracker.set_local_player("1b70c...edb56") is False,
+    )
+    check(
+        "Jogador local não conta como fill",
+        not tracker.on_player_join("conv", "1b70c...edb56")
+        and len(tracker.players) == 3,
+    )
+    check(
+        "Saída em outro canal é ignorada",
+        not tracker.on_player_leave("outro", "004b4...374e1")
+        and len(tracker.players) == 3,
+    )
+    tracker.on_player_leave("conv", "004b4...374e1")
+    tracker.on_player_leave("conv", "e3446...6269d")
+    check(
+        "Saída parcial mantém o restante",
+        len(tracker.players) == 1,
+        f"{len(tracker.players)} na lista",
+    )
+    tracker.on_player_leave("conv", "9e23f...4b43c")
+    check(
+        "Conjunto vazio quando todos saem",
+        tracker.empty and tracker.seen_players,
+    )
+    tracker.on_match_chat("conv2")
+    check(
+        "Novo canal zera a lista",
+        tracker.empty and not tracker.seen_players and tracker.local_player == "1b70c...edb56",
+    )
+
+    print()
+    print("Integração da saída automática:")
+    bot = PirateBot(
+        config,
+        queue.Queue(),
+        threading.Event(),
+        threading.Event(),
+    )
+    bot.phase = Phase.MATCH
+    bot._next_scan_at = time.time() + 999.0
+    bot._squad.set_local_player("1b70c...edb56")
+    bot._handle_event(LogEvent("match_chat", "conv", "", time.time()))
+    bot._handle_event(LogEvent("squad_join", "conv|004b4...374e1", "", time.time()))
+    bot._handle_event(LogEvent("squad_join", "conv|e3446...6269d", "", time.time()))
+    bot._handle_event(LogEvent("squad_leave", "conv|004b4...374e1", "", time.time()))
+    check(
+        "Saída não é agendada com fill restante",
+        bot._squad_leave_due_at == 0.0,
+        f"restam {len(bot._squad.players)}",
+    )
+    bot._handle_event(LogEvent("squad_leave", "conv|e3446...6269d", "", time.time()))
+    check(
+        "Saída agendada após o último fill",
+        bot._squad_leave_due_at > time.time(),
+        f"em {bot._squad_leave_due_at - time.time():.1f}s",
+    )
+    bot._handle_event(LogEvent("squad_join", "conv|9e23f...4b43c", "", time.time()))
+    check(
+        "Preenchimento que volta cancela a saída",
+        bot._squad_leave_due_at == 0.0,
+    )
+    bot._squad.players.clear()
+    bot._squad_leave_due_at = time.time() + 10.0
+    bot.token_found = True
+    bot._do_match(time.time())
+    check(
+        "Token encontrado cancela a saída",
+        bot._squad_leave_due_at == 0.0,
+    )
+    bot.token_found = False
+    bot._squad.players.clear()
+    bot._squad_leave_due_at = time.time() + 10.0
+    bot._handle_event(LogEvent("squad_join", "conv|004b4...374e1", "", time.time()))
+    check(
+        "Preenchimento que volta rearma o AFK",
+        bot._squad_leave_due_at == 0.0 and len(bot._squad.players) == 1,
+    )
+
+    bot._squad_leave_due_at = 0.0
+    bot.token_found = False
+    bot._handle_event(LogEvent("no_teammates", "", "", time.time()))
+    check(
+        "Morte sem companheiros vivos agenda a saída",
+        bot._squad_leave_due_at > time.time(),
+        f"em {bot._squad_leave_due_at - time.time():.1f}s"
+        if bot._squad_leave_due_at
+        else "não agendada",
+    )
+    bot._squad_leave_due_at = 0.0
+    bot.token_found = True
+    bot._handle_event(LogEvent("no_teammates", "", "", time.time()))
+    check(
+        "Com token, morte sem companheiros não agenda saída",
+        bot._squad_leave_due_at == 0.0,
+    )
+    bot.token_found = False
 
     try:
         path = Path(config.game.log_path)
@@ -267,6 +788,8 @@ def main() -> int:
             detection = detector.detect(frame)
             play = detector.find_play_button(frame)
             suspend = detector.find_suspend_button(frame)
+            exit_hit = detector.find_exit_button(frame)
+            imwrite_u(LOGS / "live_foreground.png", frame)
             print(
                 f"Janela {window.width}x{window.height}; primeiro plano: "
                 f"{grabber.is_foreground()}"
@@ -281,6 +804,15 @@ def main() -> int:
             )
             print(f"JOGAR: {'sim' if play else 'não'}")
             print(f"Suspensão: {'sim' if suspend else 'não'}")
+            print(
+                "Seta de saída: "
+                + (
+                    f"sim, score {exit_hit.score:.2f} em "
+                    f"({exit_hit.x},{exit_hit.y}) {exit_hit.w}x{exit_hit.h}"
+                    if exit_hit
+                    else "não"
+                )
+            )
             check("Captura ao vivo", True)
 
             print()
@@ -289,6 +821,8 @@ def main() -> int:
             background_detection = detector.detect(background_frame)
             background_play = detector.find_play_button(background_frame)
             background_suspend = detector.find_suspend_button(background_frame)
+            background_exit = detector.find_exit_button(background_frame)
+            imwrite_u(LOGS / "live_background.png", background_frame)
             print(
                 f"Janela {background_frame.shape[1]}x{background_frame.shape[0]}; "
                 f"primeiro plano: {grabber.is_foreground()}"
@@ -304,6 +838,16 @@ def main() -> int:
             )
             print(f"JOGAR: {'sim' if background_play else 'não'}")
             print(f"Suspensão: {'sim' if background_suspend else 'não'}")
+            print(
+                "Seta de saída: "
+                + (
+                    f"sim, score {background_exit.score:.2f} em "
+                    f"({background_exit.x},{background_exit.y}) "
+                    f"{background_exit.w}x{background_exit.h}"
+                    if background_exit
+                    else "não"
+                )
+            )
             check(
                 "Captura em segundo plano",
                 True,

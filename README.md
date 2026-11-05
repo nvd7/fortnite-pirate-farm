@@ -13,7 +13,7 @@
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="#requisitos"><img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white" alt="Windows 10/11"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licen%C3%A7a-MIT-34d399" alt="Licença MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.1.0-f5c451" alt="Versão 1.1.0"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.1.2-f5c451" alt="Versão 1.1.2"></a>
   <a href="https://github.com/nvd7/fortnite-pirate-farm/actions/workflows/tests.yml"><img src="https://github.com/nvd7/fortnite-pirate-farm/actions/workflows/tests.yml/badge.svg" alt="Testes"></a>
   <img src="https://img.shields.io/badge/idioma-PT--BR-0b1220" alt="Português do Brasil">
 </p>
@@ -38,9 +38,10 @@
 > local, captura a tela e envia cliques/teclas como um usuário.
 
 > [!IMPORTANT]
-> **Status:** v1.1.0 — modo segundo plano, foco rápido e interface escura.
-> O primeiro farm com partidas reais deve ser supervisionado, porque telas de
-> recompensa e mudanças de layout do Fortnite podem exigir calibração.
+> **Status:** v1.1.2 — pós-partida por clique visual, saída automática quando o
+> esquadrão fica vazio e retorno pelo menu **Voltar ao Lobby**. O primeiro farm
+> com partidas reais deve ser supervisionado, porque telas de recompensa e
+> mudanças de layout do Fortnite podem exigir calibração.
 
 ---
 
@@ -55,8 +56,12 @@ O ciclo é automático:
 
 1. O bot identifica o lobby e clica em **JOGAR**.
 2. Entra na partida e fica parado, observando o banner do token.
-3. Ao terminar a partida, volta ao lobby e começa outra.
-4. Quando o token aparece, espera a partida acabar, retorna ao lobby, confirma a
+3. Acompanha os preenchimentos pelo canal de chat do jogo. Se todos saírem (ou
+   morrerem) e a partida ficar sem companheiros vivos, abre o menu com **ESC** e
+   clica em **Voltar ao Lobby** para procurar outro esquadrão.
+4. Ao terminar a partida, clica em **JOGAR NOVAMENTE** na tela de resumo. Se não
+   houver esse botão, abre o menu com **ESC** e usa **Voltar ao Lobby**.
+5. Quando o token aparece, espera a partida acabar, retorna ao lobby, confirma a
    recompensa com **CLAIM ALL** (se a tela aparecer) e encerra.
 
 A automação é **híbrida**: o `FortniteGame.log` informa em que fase o jogo está;
@@ -76,6 +81,12 @@ o botão **CLAIM ALL**. Nada é enviado para a internet.
   testada contra lobby, desktop, tela de suspensão e imagens de referência.
 - **Ciclo por log + visão:** lobby, matchmaking, partida, pós-partida e retorno ao
   lobby sem depender de temporizações fixas.
+- **Pós-partida por clique visual:** clica em **JOGAR NOVAMENTE** ou
+  **RETORNAR AO LOBBY**; não usa ENTER/ESPAÇO, então o chat do jogo não abre.
+- **Saída automática do esquadrão:** quando todos os preenchimentos saem ou não
+  há mais companheiros vivos, o bot abre o menu e clica em **Voltar ao Lobby**.
+  A saída é cancelada se algum preenchimento voltar e nunca acontece com o token
+  encontrado.
 - **CLAIM ALL automático** na tela de recompensa do token.
 - **Tela de suspensão do Fortnite:** detecta “O FORTNITE ESTÁ NO MODO DE
   SUSPENSÃO” e clica em **CONTINUAR JOGANDO**.
@@ -241,7 +252,12 @@ relativas a **1920×1080** e escaladas para o tamanho real da janela.
 | `behavior.auto_close_success_seconds` | `30` | Segundos até fechar após achar o token; `0` = não fecha |
 | `behavior.claim_timeout` | `20.0` | Tempo (s) procurando a tela de recompensa |
 | `behavior.matchmaking_timeout` | `240.0` | Tempo (s) esperando a partida começar |
+| `behavior.postmatch_click_after` | `8.0` | Espera (s) antes de clicar no resumo |
+| `behavior.postmatch_click_retry` | `6.0` | Intervalo (s) entre tentativas de clique no resumo |
+| `behavior.postmatch_menu_after` | `14.0` | Espera (s) para abrir o menu com ESC quando o resumo não tem botões |
 | `behavior.postmatch_timeout` | `180.0` | Tempo (s) máximo nas telas de pós-partida |
+| `behavior.squad_leave_delay` | `10.0` | Espera (s) antes de sair quando o esquadrão fica vazio |
+| `behavior.squad_leave_retry` | `20.0` | Intervalo (s) entre tentativas de saída |
 | `ui.play_button` | `[265, 938]` | Centro do botão JOGAR no lobby |
 | `ui.suspend_continue` | `[960, 496]` | Centro de CONTINUAR JOGANDO |
 | `ui.claim_button` | `[965, 992]` | Centro do CLAIM ALL |
@@ -249,6 +265,9 @@ relativas a **1920×1080** e escaladas para o tamanho real da janela.
 | `detection.inner_score_small` | `0.62` | Limiar para tokens pequenos (banner e ícones) |
 | `detection.white_max_inner` | `0.80` | Branco máximo no centro do disco (evita efeitos dourados) |
 | `detection.frame_score` | `0.70` | Limiar do quadro dourado do banner |
+| `detection.play_again_score` | `0.65` | Limiar do botão JOGAR NOVAMENTE |
+| `detection.return_lobby_score` | `0.65` | Limiar do botão RETORNAR AO LOBBY |
+| `detection.voltar_lobby_score` | `0.62` | Limiar do botão Voltar ao Lobby no menu |
 
 > [!TIP]
 > Para testar com poucas partidas, use `max_matches: 2`. Para limitar o tempo,
@@ -274,8 +293,11 @@ forma incremental. Entre os eventos usados:
 | `UI State ... [UI.State.Athena.Frontend]` | lobby |
 | `UI State ... [UI.State.Athena.BattleRoyale]` | partida |
 | `EAthenaGamePhase::EndGame` | fim da partida |
-| `WBP_PostMatchPanelContainer` | tela de pós-partida |
+| `Match State Changed ... WaitingPostMatch/LeavingMap` | tela de pós-partida |
+| `WBP_PostMatchPanelContainer` | widget do resumo da partida |
 | `OnPlayerPawnDied` | seu personagem morreu |
+| `LogSocialChatManager ... Pl:/PlayerAdded/PlayerRemoved` | preenchimentos entram e saem do esquadrão |
+| `LogSpectateAfterDeathViewTarget ... No teammates available to follow` | você morreu e não há companheiros vivos |
 
 ### Visão computacional
 
@@ -284,6 +306,11 @@ forma incremental. Entre os eventos usados:
 - **`assets/coin_banner_frame.png`** — quadro dourado do banner do token.
 - **`assets/play_button.png`** e **`assets/suspend_button.png`** — botões do
   lobby e da tela de suspensão.
+- **`assets/play_again.png`** e **`assets/return_lobby.png`** — botões do resumo
+  da partida (**JOGAR NOVAMENTE** e **RETORNAR AO LOBBY**).
+- **`assets/voltar_lobby.png`** — botão **Voltar ao Lobby** do menu de pausa
+  novo; **`assets/exit_icon.png`** mantém o fluxo da interface antiga como
+  fallback.
 
 Cada acerto é validado por proporção de dourado e presença de branco no centro,
 o que reduz falsos positivos no lobby e no desktop.
@@ -313,8 +340,10 @@ Para validar também a captura ao vivo (Fortnite aberto, sem focar o jogo):
 ```
 
 O teste cobre templates do token, imagens negativas, botões JOGAR/CONTINUAR,
-captura em segundo plano, prevenção de suspensão e o parser do log real. O
-workflow de CI roda a compilação e o autoteste offline no Windows.
+pós-partida por clique visual, menu **Voltar ao Lobby**, rastreamento dos
+preenchimentos, captura em segundo plano, prevenção de suspensão e o parser do
+log real. São 68 verificações offline; o workflow de CI roda a compilação e o
+autoteste no Windows.
 
 ---
 
@@ -334,6 +363,7 @@ fortnite_pirate_farm/
 │   ├── hotkey.py               # atalho global F8
 │   ├── logwatcher.py           # leitura incremental do log
 │   ├── power.py                # prevenção de suspensão do Windows
+│   ├── squad.py                # rastreamento dos preenchimentos
 │   └── vision.py               # PrintWindow, templates e OpenCV
 ├── assets/
 │   ├── logo.png                # identidade visual
@@ -341,6 +371,10 @@ fortnite_pirate_farm/
 │   ├── coin_banner_frame.png
 │   ├── play_button.png
 │   ├── suspend_button.png
+│   ├── play_again.png
+│   ├── return_lobby.png
+│   ├── voltar_lobby.png
+│   ├── exit_icon.png
 │   └── test/                   # imagens de referência do autoteste
 ├── docs/
 │   ├── banner.png
@@ -365,7 +399,7 @@ fortnite_pirate_farm/
 | **Token não detectado** | Veja as capturas em `logs\snapshots\`. Atualizações do jogo podem mudar a arte; recalibre os templates com uma captura nova. |
 | **O jogo entra em suspensão** | O bot tenta **CONTINUAR JOGANDO**, mas o ideal é desativar a suspensão nas configurações do Fortnite e manter a janela sem borda. |
 | **O PC dorme ou a tela bloqueia** | Ative **Manter PC acordado** e desative a suspensão/bloqueio automático no Windows. `Win+L` manual não é impedido. |
-| **A tela de recompensa não avança** | Aumente `postmatch_enter_after`, `postmatch_space_after` e `postmatch_click_after`, ou clique manualmente. |
+| **A tela de pós-partida não avança** | Confira as capturas `logs\snapshots\pos_partida_*.png`. Ajuste `postmatch_click_after`/`postmatch_click_retry` e, se o resumo não tiver botões, `postmatch_menu_after`. |
 | **Falso positivo de token** | Guarde a captura de `logs\snapshots\` e abra uma issue; não aumente o limiar sem testar as imagens negativas. |
 | **Python não encontrado no `run.bat`** | Reinstale o Python marcando **Add python.exe to PATH** e abra um terminal novo. |
 | **O app não abre** | Execute `run_debug.bat` e observe o console. Envie o erro junto com a versão do Windows/Python. |

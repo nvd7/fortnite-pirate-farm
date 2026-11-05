@@ -19,6 +19,28 @@ _MATCH_RE = re.compile(r"Match State Changed from (\w+) to (\w+)")
 _PHASE_RE = re.compile(r"EAthenaGamePhase::(\w+)")
 _READY_RE = re.compile(r"await_barrier_requested.*BarrierId=\[ReadyUp\]")
 
+# Canal de chat da partida. O Fortnite cria esse canal ao entrar na ilha e
+# adiciona/remove os companheiros de esquadrão (fills) conforme eles entram e
+# saem. É a fonte mais confiável para saber quando todos abandonaram a partida.
+_MATCH_CHAT_RE = re.compile(
+    r"LogSocialChatManager:.*?ChannelName:BR\.Any\..*?"
+    r"Conversation:\[(?P<conversation>[^\]]+)\]"
+)
+_SQUAD_RE = re.compile(
+    r"LogSocialChatManager:.*?Conversation:\[(?P<conversation>[^\]]+)\].*?"
+    r"(?P<kind>Pl:|PlayerAdded:MCP:|PlayerRemoved:MCP:)"
+    r"(?P<player>[0-9a-fA-F]+(?:\.\.\.[0-9a-fA-F]+)?)"
+)
+_LOCAL_PLAYER_RE = re.compile(
+    r"SetHasFinishedLoading.*?Player:\s*MCP:(?P<player>[0-9a-fA-F]+)"
+)
+# Emitido após a morte do jogador local quando não há mais ninguém vivo no
+# esquadrão. É o sinal de que o resumo pode não exibir JOGAR NOVAMENTE e de
+# que a saída correta é ESC -> "Voltar ao Lobby".
+_NO_TEAMMATES_RE = re.compile(
+    r"LogSpectateAfterDeathViewTarget:.*?No teammates available to follow"
+)
+
 STATE_LOBBY = "lobby"
 STATE_MATCH = "match"
 STATE_LOGIN = "login"
@@ -56,6 +78,19 @@ def _ui_state(value: str) -> str:
     return STATE_OTHER
 
 
+def player_key(player_id: str) -> str:
+    """Normaliza IDs completos e truncados do log para a mesma chave.
+
+    O `Pl:` traz o ID completo (32 caracteres), enquanto `PlayerAdded` e
+    `PlayerRemoved` trazem a forma curta ``004b4...374e1``. Os dois formatos
+    precisam ser comparáveis para acompanhar a saída dos preenchimentos.
+    """
+    value = player_id.strip().lower()
+    if "..." in value or len(value) <= 12:
+        return value
+    return f"{value[:5]}...{value[-5:]}"
+
+
 def parse_line(line: str, when: Optional[float] = None) -> Optional[LogEvent]:
     """Converte uma linha do log em um evento, ou None se não interessar."""
     when = time.time() if when is None else when
@@ -72,11 +107,33 @@ def parse_line(line: str, when: Optional[float] = None) -> Optional[LogEvent]:
     if match:
         return LogEvent("phase", match.group(1), line, when)
 
+    if "LogSocialChatManager" in line:
+        match = _MATCH_CHAT_RE.search(line)
+        if match:
+            return LogEvent("match_chat", match.group("conversation"), line, when)
+
+        match = _SQUAD_RE.search(line)
+        if match:
+            kind = (
+                "squad_leave"
+                if match.group("kind").startswith("PlayerRemoved")
+                else "squad_join"
+            )
+            value = f"{match.group('conversation')}|{player_key(match.group('player'))}"
+            return LogEvent(kind, value, line, when)
+
+    match = _LOCAL_PLAYER_RE.search(line)
+    if match:
+        return LogEvent("local_player", player_key(match.group("player")), line, when)
+
     if "WBP_PostMatchPanelContainer" in line:
         return LogEvent("postmatch", "", line, when)
 
     if "OnPlayerPawnDied" in line:
         return LogEvent("player_died", "", line, when)
+
+    if _NO_TEAMMATES_RE.search(line):
+        return LogEvent("no_teammates", "", line, when)
 
     if _READY_RE.search(line):
         return LogEvent("readyup", "", line, when)

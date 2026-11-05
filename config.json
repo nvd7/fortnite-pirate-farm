@@ -18,13 +18,13 @@
       960,
       496
     ],
-    "postmatch_safe_click": [
-      1710,
-      1010
-    ],
     "claim_button": [
       965,
       992
+    ],
+    "leave_match_confirm": [
+      0,
+      0
     ]
   },
   "detection": {
@@ -63,7 +63,11 @@
     "gold_min_inner_small": 0.6,
     "white_min_frame": 0.08,
     "play_score": 0.8,
-    "suspend_score": 0.8
+    "suspend_score": 0.8,
+    "exit_icon_score": 0.6,
+    "return_lobby_score": 0.65,
+    "play_again_score": 0.65,
+    "voltar_lobby_score": 0.62
   },
   "behavior": {
     "scan_interval_match": 1.6,
@@ -71,14 +75,17 @@
     "focus_interval": 20.0,
     "ready_delay": 3.0,
     "matchmaking_timeout": 240.0,
-    "postmatch_enter_after": 20.0,
-    "postmatch_space_after": 32.0,
-    "postmatch_click_after": 45.0,
+    "postmatch_click_after": 8.0,
+    "postmatch_click_retry": 6.0,
+    "postmatch_menu_after": 14.0,
     "postmatch_timeout": 180.0,
     "claim_timeout": 20.0,
     "claim_scan_interval": 1.0,
+    "squad_leave_delay": 10.0,
+    "squad_leave_retry": 20.0,
+    "squad_leave_max_attempts": 3,
     "max_matches": 0,
-    "max_runtime_minutes": 0,
+    "max_runtime_minutes": 30,
     "auto_close_success_seconds": 30,
     "dry_run": false,
     "background_mode": true

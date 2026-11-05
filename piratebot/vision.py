@@ -209,6 +209,24 @@ class TokenDetector:
         self.frame = self._load("coin_banner_frame.png")
         self.play_button = self._load("play_button.png")
         self.suspend_button = self._load("suspend_button.png")
+        try:
+            self.exit_icon = self._load("exit_icon.png")
+        except FileNotFoundError:
+            # Instalações antigas podem não ter o template novo; a saída
+            # automática simplesmente fica indisponível.
+            self.exit_icon = None
+        try:
+            self.return_lobby = self._load("return_lobby.png")
+        except FileNotFoundError:
+            self.return_lobby = None
+        try:
+            self.play_again = self._load("play_again.png")
+        except FileNotFoundError:
+            self.play_again = None
+        try:
+            self.voltar_lobby = self._load("voltar_lobby.png")
+        except FileNotFoundError:
+            self.voltar_lobby = None
 
         self._inner_gray = cv2.cvtColor(self.inner, cv2.COLOR_BGR2GRAY)
         self._frame_gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
@@ -335,6 +353,7 @@ class TokenDetector:
         score_min: float,
         region: Optional[tuple[int, int, int, int]] = None,
         base_width: int = 1920,
+        factors: tuple[float, ...] = (0.85, 0.925, 1.0, 1.075, 1.15),
     ) -> Optional[ButtonHit]:
         height, width = image.shape[:2]
         if region is None:
@@ -352,7 +371,7 @@ class TokenDetector:
         base_scale = width / base_width
 
         best = ButtonHit(0.0, 0, 0, 0, 0)
-        for factor in (0.85, 0.925, 1.0, 1.075, 1.15):
+        for factor in factors:
             scale = base_scale * factor
             tw = int(round(template_gray.shape[1] * scale))
             th = int(round(template_gray.shape[0] * scale))
@@ -381,6 +400,105 @@ class TokenDetector:
 
     def find_suspend_button(self, image: np.ndarray) -> Optional[ButtonHit]:
         return self._find_button(image, self.suspend_button, self.config.suspend_score)
+
+    def find_return_lobby_button(self, image: np.ndarray) -> Optional[ButtonHit]:
+        """Localiza o botão RETORNAR AO LOBBY na tela de resumo da partida."""
+        if self.return_lobby is None:
+            return None
+        height, width = image.shape[:2]
+        region = (
+            int(width * 0.55),
+            int(height * 0.30),
+            width,
+            int(height * 0.60),
+        )
+        return self._find_button(
+            image,
+            self.return_lobby,
+            self.config.return_lobby_score,
+            region=region,
+        )
+
+    def find_play_again_button(self, image: np.ndarray) -> Optional[ButtonHit]:
+        """Localiza o botão JOGAR NOVAMENTE na tela de resumo da partida.
+
+        A busca fica restrita à metade direita e à faixa vertical dos botões
+        grandes do resumo, para não confundir com elementos do HUD.
+        """
+        if self.play_again is None:
+            return None
+        height, width = image.shape[:2]
+        region = (
+            int(width * 0.55),
+            int(height * 0.35),
+            width,
+            int(height * 0.65),
+        )
+        return self._find_button(
+            image,
+            self.play_again,
+            self.config.play_again_score,
+            region=region,
+        )
+
+    def find_voltar_lobby_button(self, image: np.ndarray) -> Optional[ButtonHit]:
+        """Localiza o botão Voltar ao Lobby dentro do menu de pausa.
+
+        Na interface nova o menu não tem mais a seta de saída: o primeiro
+        botão da aba do menu já é ``Voltar ao Lobby``. A busca fica no topo
+        da metade direita, onde esse painel aparece.
+        """
+        if self.voltar_lobby is None:
+            return None
+        height, width = image.shape[:2]
+        region = (
+            int(width * 0.55),
+            int(height * 0.08),
+            width,
+            int(height * 0.30),
+        )
+        return self._find_button(
+            image,
+            self.voltar_lobby,
+            self.config.voltar_lobby_score,
+            region=region,
+        )
+
+    @property
+    def exit_icon_width(self) -> int:
+        if self.exit_icon is None:
+            return 0
+        return int(self.exit_icon.shape[1])
+
+    def find_exit_button(self, image: np.ndarray) -> Optional[ButtonHit]:
+        """Localiza a seta de saída no canto superior direito do menu.
+
+        O menu social do Fortnite fica ancorado à direita. A busca é limitada
+        ao canto superior direito para não confundir a seta com ícones do HUD.
+        """
+        if self.exit_icon is None:
+            return None
+        height, width = image.shape[:2]
+        region = (int(width * 0.55), 0, width, max(1, int(height * 0.25)))
+        return self._find_button(
+            image,
+            self.exit_icon,
+            self.config.exit_icon_score,
+            region=region,
+            factors=(
+                0.65,
+                0.75,
+                0.85,
+                0.925,
+                1.0,
+                1.075,
+                1.15,
+                1.3,
+                1.45,
+                1.6,
+                1.8,
+            ),
+        )
 
 
 @dataclass

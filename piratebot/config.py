@@ -46,8 +46,8 @@ def _build(cls: type[T], data: dict[str, Any]) -> T:
             "play_tab",
             "play_button",
             "suspend_continue",
-            "postmatch_safe_click",
             "claim_button",
+            "leave_match_confirm",
         ):
             value = _pair(value)
         elif f.name in ("inner_scales", "frame_scales"):
@@ -75,8 +75,9 @@ class UIConfig:
     play_tab: tuple[int, int] = (265, 68)
     play_button: tuple[int, int] = (265, 938)
     suspend_continue: tuple[int, int] = (960, 496)
-    postmatch_safe_click: tuple[int, int] = (1710, 1010)
     claim_button: tuple[int, int] = (965, 992)
+    # (0, 0) = usa ENTER quando o jogo pedir confirmação para sair.
+    leave_match_confirm: tuple[int, int] = (0, 0)
 
 
 @dataclass
@@ -97,6 +98,14 @@ class DetectionConfig:
     white_min_frame: float = 0.08
     play_score: float = 0.80
     suspend_score: float = 0.80
+    # Seta de saída no canto superior direito do menu de pausa (UI antiga).
+    exit_icon_score: float = 0.60
+    # Botão RETORNAR AO LOBBY na tela de resumo da partida.
+    return_lobby_score: float = 0.65
+    # Botão JOGAR NOVAMENTE na tela de resumo da partida.
+    play_again_score: float = 0.65
+    # Botão Voltar ao Lobby dentro do menu de pausa (UI nova).
+    voltar_lobby_score: float = 0.62
 
 
 @dataclass
@@ -106,12 +115,22 @@ class BehaviorConfig:
     focus_interval: float = 20.0
     ready_delay: float = 3.0
     matchmaking_timeout: float = 240.0
-    postmatch_enter_after: float = 20.0
-    postmatch_space_after: float = 32.0
-    postmatch_click_after: float = 45.0
+    # Espera a tela de resumo aparecer antes de clicar em JOGAR NOVAMENTE.
+    postmatch_click_after: float = 8.0
+    # Intervalo entre cliques caso o resumo não avance de imediato.
+    postmatch_click_retry: float = 6.0
+    # Se o resumo não mostrar nenhum botão (caso em que o jogador local foi o
+    # último sobrevivente), espera esse tempo e abre o menu com ESC para usar
+    # "Voltar ao Lobby".
+    postmatch_menu_after: float = 14.0
     postmatch_timeout: float = 180.0
     claim_timeout: float = 20.0
     claim_scan_interval: float = 1.0
+    # Tempo de espera antes de sair quando o último fill abandona a partida.
+    # Se alguém voltar nesse intervalo, a saída é cancelada.
+    squad_leave_delay: float = 10.0
+    squad_leave_retry: float = 20.0
+    squad_leave_max_attempts: int = 3
     max_matches: int = 0
     max_runtime_minutes: int = 0
     auto_close_success_seconds: int = 30

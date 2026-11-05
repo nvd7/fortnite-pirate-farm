@@ -54,6 +54,7 @@ MOUSEEVENTF_LEFTUP = 0x0004
 VK_MENU = 0x12
 VK_RETURN = 0x0D
 VK_SPACE = 0x20
+VK_ESCAPE = 0x1B
 KEYEVENTF_KEYUP = 0x0002
 SW_RESTORE = 9
 
@@ -241,3 +242,6 @@ class GameController:
 
     def press_space(self) -> bool:
         return self._press_key("space", VK_SPACE)
+
+    def press_escape(self) -> bool:
+        return self._press_key("escape", VK_ESCAPE)

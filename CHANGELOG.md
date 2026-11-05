@@ -4,6 +4,39 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto usa versionamento semântico.
 
+## [1.1.2] - 2026-11-05
+
+### Adicionado
+
+- Rastreamento dos preenchimentos pelo canal `BR.Any` do chat do Fortnite.
+  O bot identifica quem entrou e quem saiu, ignorando o jogador local.
+- Saída automática quando o último preenchimento abandona a partida, com
+  cancelamento caso alguém volte e bloqueio quando o token já foi encontrado.
+- Detecção dos botões **JOGAR NOVAMENTE**, **RETORNAR AO LOBBY** e **Voltar ao
+  Lobby** (menu novo), com templates próprios em `assets/`.
+- Fallback **ESC → Voltar ao Lobby** quando o resumo da partida não exibe
+  botões, incluindo o caso em que o jogador local morre sem companheiros vivos
+  (`No teammates available to follow`).
+
+### Alterado
+
+- O pós-partida agora clica visualmente em **JOGAR NOVAMENTE** para reenfileirar
+  e em **RETORNAR AO LOBBY** quando o token foi encontrado ou o limite de
+  partidas foi atingido. ENTER e ESPAÇO não são mais usados para avançar telas.
+- A saída automática usa primeiro o botão **Voltar ao Lobby** do menu novo; a
+  seta da interface antiga permanece como fallback.
+- Na tela de morte o menu pode já estar aberto; o bot confere antes de pressionar
+  ESC, evitando fechar o menu por engano.
+- A transição do resumo para a partida seguinte volta a contabilizar a nova
+  partida.
+- Autoteste ampliado para 68 verificações, cobrindo pós-partida sem ENTER/ESPAÇO,
+  menu novo, morte sem companheiros e contagem de partidas.
+
+### Removido
+
+- Opções `postmatch_enter_after`, `postmatch_space_after` e
+  `postmatch_safe_click`, substituídas pelo clique visual nos botões do resumo.
+
 ## [1.1.1] - 2026-11-05
 
 ### Corrigido
