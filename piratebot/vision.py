@@ -1,0 +1,406 @@
+"""Captura de tela, localização da janela e detecção visual do token."""
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+import cv2
+import mss
+import numpy as np
+
+try:
+    import win32gui
+except ImportError:  # pragma: no cover
+    win32gui = None
+
+from .config import DetectionConfig
+
+
+class GameWindowNotFound(RuntimeError):
+    pass
+
+
+class ScreenCaptureError(RuntimeError):
+    pass
+
+
+def imread_u(path: str | Path) -> Optional[np.ndarray]:
+    """cv2.imread não aceita acentos no caminho do Windows; este lê por bytes."""
+    try:
+        data = np.fromfile(str(path), dtype=np.uint8)
+        if data.size == 0:
+            return None
+        return cv2.imdecode(data, cv2.IMREAD_COLOR)
+    except Exception:
+        return None
+
+
+def imwrite_u(path: str | Path, image: np.ndarray) -> bool:
+    path = Path(path)
+    try:
+        extension = path.suffix or ".png"
+        ok, buffer = cv2.imencode(extension, image)
+        if not ok:
+            return False
+        buffer.tofile(str(path))
+        return True
+    except Exception:
+        return False
+
+
+def gold_ratio(bgr: np.ndarray) -> float:
+    if bgr.size == 0:
+        return 0.0
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (5, 70, 70), (42, 255, 255))
+    return float((mask > 0).mean())
+
+
+def white_ratio_center(bgr: np.ndarray) -> float:
+    if bgr.size == 0:
+        return 0.0
+    height, width = bgr.shape[:2]
+    center = bgr[int(height * 0.28) : int(height * 0.72), int(width * 0.28) : int(width * 0.72)]
+    if center.size == 0:
+        return 0.0
+    hsv = cv2.cvtColor(center, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, (0, 0, 170), (180, 95, 255))
+    return float((mask > 0).mean())
+
+
+@dataclass
+class Hit:
+    kind: str
+    score: float
+    x: int
+    y: int
+    w: int
+    h: int
+    gold: float
+    white: float
+
+    @property
+    def center(self) -> tuple[int, int]:
+        return self.x + self.w // 2, self.y + self.h // 2
+
+
+@dataclass
+class Detection:
+    found: bool
+    hits: list[Hit]
+    elapsed_ms: float
+
+    @property
+    def best(self) -> Optional[Hit]:
+        return self.hits[0] if self.hits else None
+
+
+@dataclass
+class ButtonHit:
+    score: float
+    x: int
+    y: int
+    w: int
+    h: int
+
+    @property
+    def center(self) -> tuple[int, int]:
+        return self.x + self.w // 2, self.y + self.h // 2
+
+
+def _nms(hits: list[tuple[float, int, int, int, int, str]], ratio: float = 0.45):
+    kept = []
+    for hit in sorted(hits, key=lambda item: -item[0]):
+        score, x, y, width, height, kind = hit
+        center_x, center_y = x + width / 2, y + height / 2
+        duplicate = False
+        for other in kept:
+            _, ox, oy, ow, oh, _ = other
+            ocx, ocy = ox + ow / 2, oy + oh / 2
+            if (
+                abs(center_x - ocx) < min(width, ow) * ratio
+                and abs(center_y - ocy) < min(height, oh) * ratio
+            ):
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(hit)
+    return kept
+
+
+class TokenDetector:
+    """Detecta a moeda dourada do Pirate Shop Access.
+
+    A moeda é procurada em duas formas:
+      - inner: disco dourado com o "F" branco (tela de recompensa)
+      - frame: quadro dourado do banner durante a partida
+    """
+
+    def __init__(self, assets: str | Path, config: DetectionConfig) -> None:
+        self.assets = Path(assets)
+        self.config = config
+
+        self.inner = self._load("coin_inner.png")
+        self.frame = self._load("coin_banner_frame.png")
+        self.play_button = self._load("play_button.png")
+        self.suspend_button = self._load("suspend_button.png")
+
+        self._inner_gray = cv2.cvtColor(self.inner, cv2.COLOR_BGR2GRAY)
+        self._frame_gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
+
+    def _load(self, name: str) -> np.ndarray:
+        path = self.assets / name
+        image = imread_u(path)
+        if image is None:
+            raise FileNotFoundError(f"Template não encontrado ou inválido: {path}")
+        return image
+
+    def detect(self, image: np.ndarray) -> Detection:
+        started = time.perf_counter()
+        height, width = image.shape[:2]
+        if width <= 0 or height <= 0:
+            return Detection(False, [], 0.0)
+
+        scale = min(1.0, self.config.downscale_width / width)
+        if scale < 1.0:
+            small = cv2.resize(
+                image,
+                (max(1, int(round(width * scale))), max(1, int(round(height * scale)))),
+                interpolation=cv2.INTER_AREA,
+            )
+        else:
+            small = image
+
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+        raw_hits: list[tuple[float, int, int, int, int, str]] = []
+
+        jobs = (
+            ("inner", self._inner_gray, self.config.inner_scales),
+            ("frame", self._frame_gray, self.config.frame_scales),
+        )
+
+        for kind, template_gray, scales in jobs:
+            for reference_width in scales:
+                template_width = int(round(reference_width * scale))
+                template_height = int(round(template_gray.shape[0] * template_width / template_gray.shape[1]))
+                if (
+                    template_width < 35
+                    or template_height < 35
+                    or template_width >= gray.shape[1]
+                    or template_height >= gray.shape[0]
+                ):
+                    continue
+
+                threshold = self.config.inner_score if kind == "inner" else self.config.frame_score
+                if kind == "inner" and template_width < self.config.inner_small_width:
+                    threshold = self.config.inner_score_small
+
+                template = cv2.resize(
+                    template_gray, (template_width, template_height), interpolation=cv2.INTER_AREA
+                )
+                result = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
+                ys, xs = np.where(result >= threshold)
+                for y, x in zip(ys, xs):
+                    y0, y1 = max(0, y - 2), min(result.shape[0], y + 3)
+                    x0, x1 = max(0, x - 2), min(result.shape[1], x + 3)
+                    if result[y, x] >= result[y0:y1, x0:x1].max() - 1e-6:
+                        raw_hits.append(
+                            (
+                                float(result[y, x]),
+                                int(x),
+                                int(y),
+                                template_width,
+                                template_height,
+                                kind,
+                            )
+                        )
+
+        valid: list[Hit] = []
+        for score, x, y, width_small, height_small, kind in _nms(raw_hits):
+            crop = small[y : y + height_small, x : x + width_small]
+            if crop.size == 0:
+                continue
+            gold = gold_ratio(crop)
+            white = white_ratio_center(crop)
+
+            if kind == "inner":
+                if width_small < self.config.inner_small_width:
+                    ok = (
+                        score >= self.config.inner_score_small
+                        and gold >= self.config.gold_min_inner_small
+                        and white >= self.config.white_min_inner_small
+                    )
+                else:
+                    ok = (
+                        score >= self.config.inner_score
+                        and gold >= self.config.gold_min
+                        and white >= self.config.white_min_inner
+                    )
+            else:
+                ok = (
+                    score >= self.config.frame_score
+                    and gold >= self.config.gold_min
+                    and white >= self.config.white_min_frame
+                )
+
+            if ok:
+                valid.append(
+                    Hit(
+                        kind=kind,
+                        score=score,
+                        x=int(round(x / scale)),
+                        y=int(round(y / scale)),
+                        w=int(round(width_small / scale)),
+                        h=int(round(height_small / scale)),
+                        gold=gold,
+                        white=white,
+                    )
+                )
+
+        valid.sort(key=lambda hit: -hit.score)
+        elapsed = (time.perf_counter() - started) * 1000.0
+        return Detection(bool(valid), valid, elapsed)
+
+    def _find_button(
+        self,
+        image: np.ndarray,
+        template: np.ndarray,
+        score_min: float,
+        region: Optional[tuple[int, int, int, int]] = None,
+        base_width: int = 1920,
+    ) -> Optional[ButtonHit]:
+        height, width = image.shape[:2]
+        if region is None:
+            x0, y0, x1, y1 = 0, 0, width, height
+        else:
+            x0, y0, x1, y1 = region
+            x0, y0 = max(0, x0), max(0, y0)
+            x1, y1 = min(width, x1), min(height, y1)
+        if x1 <= x0 or y1 <= y0:
+            return None
+
+        roi = image[y0:y1, x0:x1]
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        base_scale = width / base_width
+
+        best = ButtonHit(0.0, 0, 0, 0, 0)
+        for factor in (0.85, 0.925, 1.0, 1.075, 1.15):
+            scale = base_scale * factor
+            tw = int(round(template_gray.shape[1] * scale))
+            th = int(round(template_gray.shape[0] * scale))
+            if tw < 20 or th < 10 or tw >= gray.shape[1] or th >= gray.shape[0]:
+                continue
+            resized = cv2.resize(template_gray, (tw, th), interpolation=cv2.INTER_AREA)
+            result = cv2.matchTemplate(gray, resized, cv2.TM_CCOEFF_NORMED)
+            _, max_value, _, max_location = cv2.minMaxLoc(result)
+            if max_value > best.score:
+                best = ButtonHit(
+                    score=float(max_value),
+                    x=x0 + max_location[0],
+                    y=y0 + max_location[1],
+                    w=tw,
+                    h=th,
+                )
+
+        return best if best.score >= score_min else None
+
+    def find_play_button(self, image: np.ndarray) -> Optional[ButtonHit]:
+        height, width = image.shape[:2]
+        region = (0, int(height * 0.62), int(width * 0.58), height)
+        return self._find_button(
+            image, self.play_button, self.config.play_score, region=region
+        )
+
+    def find_suspend_button(self, image: np.ndarray) -> Optional[ButtonHit]:
+        return self._find_button(image, self.suspend_button, self.config.suspend_score)
+
+
+@dataclass
+class GameWindow:
+    hwnd: int
+    title: str
+    client_x: int
+    client_y: int
+    width: int
+    height: int
+
+    def monitor(self) -> dict:
+        return {
+            "left": self.client_x,
+            "top": self.client_y,
+            "width": self.width,
+            "height": self.height,
+        }
+
+
+def find_game_window(title_filter: str = "Fortnite") -> GameWindow:
+    if win32gui is None:
+        raise GameWindowNotFound("pywin32 não está instalado corretamente.")
+
+    candidates: list[tuple[int, GameWindow, str]] = []
+    fallback: list[tuple[int, GameWindow, str]] = []
+    wanted = title_filter.strip().lower()
+
+    def callback(hwnd, _):
+        if not win32gui.IsWindowVisible(hwnd):
+            return
+        title = win32gui.GetWindowText(hwnd).strip()
+        if not title or wanted not in title.lower():
+            return
+        class_name = win32gui.GetClassName(hwnd)
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+        width, height = right - left, bottom - top
+        if width < 800 or height < 600:
+            return
+        client_left, client_top = win32gui.ClientToScreen(hwnd, (0, 0))
+        _, _, client_width, client_height = win32gui.GetClientRect(hwnd)
+        window = GameWindow(
+            hwnd=hwnd,
+            title=title,
+            client_x=client_left,
+            client_y=client_top,
+            width=client_width,
+            height=client_height,
+        )
+        area = client_width * client_height
+        if class_name == "UnrealWindow":
+            candidates.append((area, window, class_name))
+        else:
+            fallback.append((area, window, class_name))
+
+    win32gui.EnumWindows(callback, None)
+
+    chosen = candidates or fallback
+    if not chosen:
+        raise GameWindowNotFound(
+            "Janela do Fortnite não encontrada. Abra o jogo e deixe-o em primeiro plano."
+        )
+
+    _, window, _ = max(chosen, key=lambda item: item[0])
+    return window
+
+
+class ScreenGrabber:
+    def __init__(self, window: GameWindow) -> None:
+        self.window = window
+
+    def is_foreground(self) -> bool:
+        return bool(win32gui) and win32gui.GetForegroundWindow() == self.window.hwnd
+
+    def capture(self) -> np.ndarray:
+        if win32gui is not None and win32gui.IsIconic(self.window.hwnd):
+            raise ScreenCaptureError("A janela do Fortnite está minimizada.")
+        try:
+            with mss.mss() as sct:
+                shot = sct.grab(self.window.monitor())
+                frame = np.asarray(shot, dtype=np.uint8)
+        except Exception as exc:
+            raise ScreenCaptureError(f"Falha ao capturar a tela: {exc}") from exc
+        if frame.ndim != 3:
+            raise ScreenCaptureError("Captura de tela inválida.")
+        if frame.shape[2] == 4:
+            return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        return frame

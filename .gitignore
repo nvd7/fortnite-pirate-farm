@@ -1,0 +1,15 @@
+# Ambiente e caches
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Execução local
+logs/
+TOKEN_ENCONTRADO.txt
+*.log
+
+# Capturas locais que podem conter a área de trabalho
+assets/test/fortnite_now.png
+assets/debug/
