@@ -16,6 +16,20 @@ interface em português e foco em simplicidade e transparência.
 3. Informe a resolução do jogo, se está em janela sem borda, a versão do
    Windows e se o modo segundo plano estava ativo.
 
+## Documentação
+
+- [Arquitetura](docs/ARQUITETURA.md): estados, componentes e modelo de threads.
+- [Validação supervisionada](docs/VALIDACAO.md): roteiro para testar os fluxos
+  que dependem da tela real do jogo.
+- [Checklist de release](docs/RELEASE.md): passos para publicar uma versão.
+
+Para problemas visuais no pós-partida, rode antes o diagnóstico (ele não clica
+nem rouba o foco):
+
+```bat
+.venv\Scripts\python.exe tools\check_postmatch.py
+```
+
 ## Ambiente de desenvolvimento
 
 ```bat
