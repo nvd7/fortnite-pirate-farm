@@ -1,4 +1,4 @@
-opencv-python>=4.10
+opencv-python>=5.0.0.93
 numpy>=2.0
 mss>=10.0
 pydirectinput>=1.0.4
