@@ -21,6 +21,8 @@ interface em português e foco em simplicidade e transparência.
 - [Arquitetura](docs/ARQUITETURA.md): estados, componentes e modelo de threads.
 - [Validação supervisionada](docs/VALIDACAO.md): roteiro para testar os fluxos
   que dependem da tela real do jogo.
+- [Calibragem de templates](docs/CALIBRAGEM.md): como recapturar e validar os
+  recortes da interface.
 - [Checklist de release](docs/RELEASE.md): passos para publicar uma versão.
 
 Para problemas visuais no pós-partida, rode antes o diagnóstico (ele não clica

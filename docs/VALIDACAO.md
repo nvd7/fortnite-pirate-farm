@@ -37,7 +37,8 @@ Se o bot não encontrar o botão:
 
 - veja `logs\snapshots\pos_partida_*.png`;
 - rode `tools\check_postmatch.py` com o resumo aberto;
-- ajuste `detection.play_again_score` ou recapture o template.
+- ajuste `detection.play_again_score` ou siga o
+  [guia de calibragem](CALIBRAGEM.md) para recapturar o template.
 
 ## 2. Pós-partida com token
 

@@ -394,6 +394,7 @@ fortnite_pirate_farm/
 │   ├── screenshot.png
 │   ├── social_preview.png
 │   ├── ARQUITETURA.md          # máquina de estados e componentes
+│   ├── CALIBRAGEM.md           # recaptura e validação de templates
 │   ├── VALIDACAO.md            # roteiro de teste supervisionado
 │   └── RELEASE.md              # checklist de publicação
 ├── tools/
@@ -413,7 +414,7 @@ fortnite_pirate_farm/
 | **“Janela do Fortnite não encontrada”** | Abra o Fortnite, use janela sem borda e não minimize. Verifique se o título da janela contém `Fortnite`. |
 | **“Falha na captura em segundo plano”** | Confirme que o jogo não está minimizado, desative tela cheia exclusiva e a suspensão do Fortnite. Teste **Testar detecção agora**. |
 | **O bot não clica em JOGAR** | Use **Testar detecção agora** e veja `logs\teste_tela.png`. Confirme o lobby, o modo Battle Royale e o Squad + Fill. |
-| **Token não detectado** | Veja as capturas em `logs\snapshots\`. Atualizações do jogo podem mudar a arte; recalibre os templates com uma captura nova. |
+| **Token não detectado** | Veja as capturas em `logs\snapshots\`. Atualizações do jogo podem mudar a arte; siga o [guia de calibragem](docs/CALIBRAGEM.md) para recapturar o template. |
 | **O jogo entra em suspensão** | O bot tenta **CONTINUAR JOGANDO**, mas o ideal é desativar a suspensão nas configurações do Fortnite e manter a janela sem borda. |
 | **O PC dorme ou a tela bloqueia** | Ative **Manter PC acordado** e desative a suspensão/bloqueio automático no Windows. `Win+L` manual não é impedido. |
 | **A tela de pós-partida não avança** | Confira as capturas `logs\snapshots\pos_partida_*.png`. Ajuste `postmatch_click_after`/`postmatch_click_retry` e, se o resumo não tiver botões, `postmatch_menu_after`. |
