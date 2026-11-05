@@ -283,6 +283,9 @@ FortniteGame.log ──► lobby / matchmaking / partida / pós-partida
         └── PrintWindow ──► OpenCV ──► token / JOGAR / CONTINUAR / CLAIM ALL
 ```
 
+A máquina de estados, as threads e o fluxo de decisão estão detalhados em
+[docs/ARQUITETURA.md](docs/ARQUITETURA.md).
+
 ### Log do Fortnite
 
 O arquivo `%LOCALAPPDATA%\FortniteGame\Saved\Logs\FortniteGame.log` é lido de
@@ -342,8 +345,18 @@ Para validar também a captura ao vivo (Fortnite aberto, sem focar o jogo):
 O teste cobre templates do token, imagens negativas, botões JOGAR/CONTINUAR,
 pós-partida por clique visual, menu **Voltar ao Lobby**, rastreamento dos
 preenchimentos, captura em segundo plano, prevenção de suspensão e o parser do
-log real. São 68 verificações offline; o workflow de CI roda a compilação e o
+log real. São 72 verificações offline; o workflow de CI roda a compilação e o
 autoteste no Windows.
+
+Para diagnosticar o resumo da partida ou o menu de pausa sem clicar no jogo:
+
+```powershell
+.venv\Scripts\python.exe tools\check_postmatch.py
+```
+
+O script mostra a confiança de cada template e salva
+`logs\diagnostico_pos_partida.png`. Os fluxos que dependem da tela real estão
+no [guia de validação supervisionada](docs/VALIDACAO.md).
 
 ---
 
@@ -379,10 +392,14 @@ fortnite_pirate_farm/
 ├── docs/
 │   ├── banner.png
 │   ├── screenshot.png
-│   └── social_preview.png
+│   ├── social_preview.png
+│   ├── ARQUITETURA.md          # máquina de estados e componentes
+│   ├── VALIDACAO.md            # roteiro de teste supervisionado
+│   └── RELEASE.md              # checklist de publicação
 ├── tools/
 │   ├── make_branding.py        # gera logo/banner (requer Pillow)
-│   └── check_bg_capture.py     # diagnóstico da captura em segundo plano
+│   ├── check_bg_capture.py     # diagnóstico da captura em segundo plano
+│   └── check_postmatch.py      # diagnose visual do resumo (não clica)
 ├── .github/workflows/tests.yml # CI de compilação e autoteste
 └── logs/                       # criado em tempo de execução
 ```
@@ -400,6 +417,7 @@ fortnite_pirate_farm/
 | **O jogo entra em suspensão** | O bot tenta **CONTINUAR JOGANDO**, mas o ideal é desativar a suspensão nas configurações do Fortnite e manter a janela sem borda. |
 | **O PC dorme ou a tela bloqueia** | Ative **Manter PC acordado** e desative a suspensão/bloqueio automático no Windows. `Win+L` manual não é impedido. |
 | **A tela de pós-partida não avança** | Confira as capturas `logs\snapshots\pos_partida_*.png`. Ajuste `postmatch_click_after`/`postmatch_click_retry` e, se o resumo não tiver botões, `postmatch_menu_after`. |
+| **Não sei qual botão o resumo exibe** | Rode `tools\check_postmatch.py` e veja a confiança de cada template. O diagnóstico não clica no jogo. |
 | **Falso positivo de token** | Guarde a captura de `logs\snapshots\` e abra uma issue; não aumente o limiar sem testar as imagens negativas. |
 | **Python não encontrado no `run.bat`** | Reinstale o Python marcando **Add python.exe to PATH** e abra um terminal novo. |
 | **O app não abre** | Execute `run_debug.bat` e observe o console. Envie o erro junto com a versão do Windows/Python. |
@@ -439,7 +457,8 @@ README são carregadas pelo GitHub, não pelo aplicativo.
 Ideias, correções e novos templates são bem-vindos. Leia
 [CONTRIBUTING.md](CONTRIBUTING.md) antes de abrir uma issue ou pull request.
 Inclua o resultado do `selftest.py`, a resolução do jogo e, quando for um
-problema visual, uma captura sem dados pessoais.
+problema visual, uma captura sem dados pessoais. Quem for publicar uma versão
+deve seguir o [checklist de release](docs/RELEASE.md).
 
 ---
 
