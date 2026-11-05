@@ -246,6 +246,7 @@ relativas a **1920×1080** e escaladas para o tamanho real da janela.
 | `ui.suspend_continue` | `[960, 496]` | Centro de CONTINUAR JOGANDO |
 | `ui.claim_button` | `[965, 992]` | Centro do CLAIM ALL |
 | `detection.inner_score` | `0.62` | Limiar do template interno do token |
+| `detection.white_max_inner` | `0.80` | Branco máximo no centro do disco (evita efeitos dourados) |
 | `detection.frame_score` | `0.70` | Limiar do quadro dourado do banner |
 
 > [!TIP]

@@ -33,7 +33,7 @@ from piratebot.vision import (
 )
 
 APP_TITLE = "Pirate Farm — Fortnite"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 # Paleta do modo escuro.
 BG = "#0b1220"

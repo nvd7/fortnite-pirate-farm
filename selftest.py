@@ -142,6 +142,23 @@ def main() -> int:
             f"score={hit.score:.2f}" if hit else "limpo",
         )
 
+    false_positive = LOGS / "snapshots" / "token_banner_20261105_160659.png"
+    if false_positive.exists():
+        print()
+        print("Falso positivo real (captura local, não versionada):")
+        image = imread_u(false_positive)
+        if image is None:
+            check("Sem token no falso positivo do banner", False, "falha ao ler a imagem")
+        else:
+            detection = detector.detect(image)
+            detail = (
+                f"falso positivo: {detection.best.kind} "
+                f"score={detection.best.score:.2f} white={detection.best.white:.2f}"
+                if detection.best
+                else "limpo"
+            )
+            check("Sem token no falso positivo do banner", not detection.found, detail)
+
     background_lobby = LOGS / "fortnite_bg.png"
     if background_lobby.exists():
         print()

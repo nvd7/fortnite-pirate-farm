@@ -294,12 +294,14 @@ class TokenDetector:
                         score >= self.config.inner_score_small
                         and gold >= self.config.gold_min_inner_small
                         and white >= self.config.white_min_inner_small
+                        and white <= self.config.white_max_inner_small
                     )
                 else:
                     ok = (
                         score >= self.config.inner_score
                         and gold >= self.config.gold_min
                         and white >= self.config.white_min_inner
+                        and white <= self.config.white_max_inner
                     )
             else:
                 ok = (

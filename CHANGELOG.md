@@ -4,6 +4,16 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto usa versionamento semântico.
 
+## [1.1.1] - 2026-11-05
+
+### Corrigido
+
+- Falso positivo do token causado por personagens e efeitos dourados com muito
+  branco no centro. A validação agora limita a proporção máxima de branco do
+  disco dourado, além dos limites mínimos já existentes.
+- `config.json` volta a salvar o caminho do log de forma portátil
+  (`%LOCALAPPDATA%`), sem gravar o caminho absoluto do usuário.
+
 ## [1.1.0] - 2026-11-05
 
 ### Adicionado

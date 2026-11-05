@@ -91,6 +91,8 @@ class DetectionConfig:
     gold_min: float = 0.65
     white_min_inner: float = 0.20
     white_min_inner_small: float = 0.20
+    white_max_inner: float = 0.80
+    white_max_inner_small: float = 0.80
     gold_min_inner_small: float = 0.60
     white_min_frame: float = 0.08
     play_score: float = 0.80
@@ -145,8 +147,15 @@ def load_config(path: Path = CONFIG_PATH) -> AppConfig:
 
 
 def save_config(cfg: AppConfig, path: Path = CONFIG_PATH) -> None:
+    # O caminho padrão é expandido ao carregar; salve-o de volta na forma
+    # portátil para o config.json continuar válido em outros computadores.
+    game = dict(cfg.game.__dict__)
+    default_log_path = GameConfig().log_path
+    if game.get("log_path") == _expand_path(default_log_path):
+        game["log_path"] = default_log_path
+
     data = {
-        "game": cfg.game.__dict__,
+        "game": game,
         "ui": cfg.ui.__dict__,
         "detection": cfg.detection.__dict__,
         "behavior": cfg.behavior.__dict__,
