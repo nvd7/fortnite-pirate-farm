@@ -18,9 +18,11 @@ recursos novos e `PATCH` para correções.
 
 ```powershell
 .venv\Scripts\python.exe -m compileall -q main.py selftest.py piratebot tools
+.venv\Scripts\python.exe tools\check_docs.py
 .venv\Scripts\python.exe selftest.py
 ```
 
+- [ ] O verificador de links não encontrou nenhum destino ausente.
 - [ ] O autoteste terminou com **todos os N testes passaram**.
 - [ ] Se houver Fortnite aberto, rode também `selftest.py --live`.
 - [ ] Abra o app e confirme a versão no cabeçalho.

@@ -345,8 +345,8 @@ Para validar também a captura ao vivo (Fortnite aberto, sem focar o jogo):
 O teste cobre templates do token, imagens negativas, botões JOGAR/CONTINUAR,
 pós-partida por clique visual, menu **Voltar ao Lobby**, rastreamento dos
 preenchimentos, captura em segundo plano, prevenção de suspensão e o parser do
-log real. São 72 verificações offline; o workflow de CI roda a compilação e o
-autoteste no Windows.
+log real. São 75 verificações offline; o workflow de CI roda a compilação, o
+verificador de links da documentação e o autoteste no Windows.
 
 Para diagnosticar o resumo da partida ou o menu de pausa sem clicar no jogo:
 
@@ -357,6 +357,13 @@ Para diagnosticar o resumo da partida ou o menu de pausa sem clicar no jogo:
 O script mostra a confiança de cada template e salva
 `logs\diagnostico_pos_partida.png`. Os fluxos que dependem da tela real estão
 no [guia de validação supervisionada](docs/VALIDACAO.md).
+
+Para conferir os links relativos da documentação antes de abrir um pull
+request:
+
+```powershell
+.venv\Scripts\python.exe tools\check_docs.py
+```
 
 ---
 
