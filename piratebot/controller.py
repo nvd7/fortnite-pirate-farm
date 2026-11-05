@@ -43,6 +43,10 @@ user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintyp
 user32.GetWindowThreadProcessId.restype = wintypes.DWORD
 user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
 user32.AttachThreadInput.restype = wintypes.BOOL
+user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+user32.GetCursorPos.restype = wintypes.BOOL
+user32.IsWindow.argtypes = [wintypes.HWND]
+user32.IsWindow.restype = wintypes.BOOL
 kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 
 MOUSEEVENTF_LEFTDOWN = 0x0002
@@ -136,10 +140,49 @@ class GameController:
         return self.ensure_foreground(force=False)
 
     def _to_screen(self, client_x: float, client_y: float) -> tuple[int, int]:
+        self.window.refresh()
         return (
             self.window.client_x + int(round(client_x)),
             self.window.client_y + int(round(client_y)),
         )
+
+    def _snapshot_context(self) -> tuple[int, Optional[tuple[int, int]]]:
+        """Guarda a janela em primeiro plano e a posição do cursor."""
+        try:
+            foreground = int(user32.GetForegroundWindow() or 0)
+        except Exception:
+            foreground = 0
+        cursor: Optional[tuple[int, int]] = None
+        point = wintypes.POINT()
+        try:
+            if user32.GetCursorPos(ctypes.byref(point)):
+                cursor = (int(point.x), int(point.y))
+        except Exception:
+            pass
+        return foreground, cursor
+
+    def _restore_context(self, snapshot: tuple[int, Optional[tuple[int, int]]]) -> None:
+        """Devolve o foco e o cursor ao usuário depois de um clique rápido."""
+        foreground, cursor = snapshot
+        try:
+            if (
+                foreground
+                and foreground != self.hwnd
+                and self.is_foreground()
+                and user32.IsWindow(foreground)
+            ):
+                if not user32.SetForegroundWindow(foreground):
+                    user32.SwitchToThisWindow(foreground, True)
+                time.sleep(0.05)
+            if cursor is not None:
+                user32.SetCursorPos(cursor[0], cursor[1])
+        except Exception as exc:
+            self.logger(f"Não consegui restaurar o foco anterior: {exc}", "debug")
+
+    def _background_context(self) -> Optional[tuple[int, Optional[tuple[int, int]]]]:
+        if not self.config.behavior.background_mode or self.dry_run:
+            return None
+        return self._snapshot_context()
 
     def click_client(self, client_x: float, client_y: float) -> bool:
         screen_x, screen_y = self._to_screen(client_x, client_y)
@@ -147,7 +190,10 @@ class GameController:
             self.logger(f"SIMULAÇÃO: clique em ({screen_x}, {screen_y}).", "debug")
             return True
 
+        snapshot = self._background_context()
         if not self.ensure_foreground(force=True):
+            if snapshot is not None:
+                self._restore_context(snapshot)
             self.logger("Não consegui colocar o Fortnite em primeiro plano para clicar.", "warn")
             return False
 
@@ -157,9 +203,12 @@ class GameController:
         time.sleep(0.07)
         user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
         time.sleep(0.15)
+        if snapshot is not None:
+            self._restore_context(snapshot)
         return True
 
     def click_ref(self, x: float, y: float) -> bool:
+        self.window.refresh()
         scaled_x = x * self.window.width / self.config.game.ref_width
         scaled_y = y * self.window.height / self.config.game.ref_height
         return self.click_client(scaled_x, scaled_y)
@@ -168,7 +217,10 @@ class GameController:
         if self.dry_run:
             self.logger(f"SIMULAÇÃO: pressionaria {name.upper()}.", "debug")
             return True
+        snapshot = self._background_context()
         if not self.ensure_foreground(force=True):
+            if snapshot is not None:
+                self._restore_context(snapshot)
             self.logger(f"Não consegui focar o jogo para pressionar {name.upper()}.", "warn")
             return False
         try:
@@ -180,6 +232,8 @@ class GameController:
             time.sleep(0.05)
             user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
         time.sleep(0.2)
+        if snapshot is not None:
+            self._restore_context(snapshot)
         return True
 
     def press_enter(self) -> bool:

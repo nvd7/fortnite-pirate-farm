@@ -114,6 +114,7 @@ class BehaviorConfig:
     max_runtime_minutes: int = 0
     auto_close_success_seconds: int = 30
     dry_run: bool = False
+    background_mode: bool = True
 
 
 @dataclass

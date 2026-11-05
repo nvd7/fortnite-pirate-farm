@@ -43,6 +43,7 @@
     "max_matches": 0,
     "max_runtime_minutes": 0,
     "auto_close_success_seconds": 30,
-    "dry_run": false
+    "dry_run": false,
+    "background_mode": true
   }
 }

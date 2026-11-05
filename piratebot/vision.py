@@ -1,7 +1,9 @@
 """Captura de tela, localização da janela e detecção visual do token."""
 from __future__ import annotations
 
+import ctypes
 import time
+from ctypes import wintypes
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -24,6 +26,67 @@ class GameWindowNotFound(RuntimeError):
 
 class ScreenCaptureError(RuntimeError):
     pass
+
+
+# --------------------------------------------------------------- Win32/GDI
+_user32 = ctypes.WinDLL("user32", use_last_error=True)
+_gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+
+_user32.GetWindowDC.argtypes = [wintypes.HWND]
+_user32.GetWindowDC.restype = wintypes.HDC
+_user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+_user32.ReleaseDC.restype = ctypes.c_int
+_user32.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+_user32.PrintWindow.restype = wintypes.BOOL
+_user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+_user32.GetClientRect.restype = wintypes.BOOL
+
+_gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+_gdi32.CreateCompatibleDC.restype = wintypes.HDC
+_gdi32.CreateCompatibleBitmap.argtypes = [wintypes.HDC, ctypes.c_int, ctypes.c_int]
+_gdi32.CreateCompatibleBitmap.restype = wintypes.HBITMAP
+_gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+_gdi32.SelectObject.restype = wintypes.HGDIOBJ
+_gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+_gdi32.DeleteObject.restype = wintypes.BOOL
+_gdi32.DeleteDC.argtypes = [wintypes.HDC]
+_gdi32.DeleteDC.restype = wintypes.BOOL
+_gdi32.GetDIBits.argtypes = [
+    wintypes.HDC,
+    wintypes.HBITMAP,
+    wintypes.UINT,
+    wintypes.UINT,
+    wintypes.LPVOID,
+    ctypes.c_void_p,
+    wintypes.UINT,
+]
+_gdi32.GetDIBits.restype = ctypes.c_int
+
+PW_RENDERFULLCONTENT = 0x00000002
+BI_RGB = 0
+
+
+class _BitmapInfoHeader(ctypes.Structure):
+    _fields_ = [
+        ("biSize", wintypes.DWORD),
+        ("biWidth", wintypes.LONG),
+        ("biHeight", wintypes.LONG),
+        ("biPlanes", wintypes.WORD),
+        ("biBitCount", wintypes.WORD),
+        ("biCompression", wintypes.DWORD),
+        ("biSizeImage", wintypes.DWORD),
+        ("biXPelsPerMeter", wintypes.LONG),
+        ("biYPelsPerMeter", wintypes.LONG),
+        ("biClrUsed", wintypes.DWORD),
+        ("biClrImportant", wintypes.DWORD),
+    ]
+
+
+class _BitmapInfo(ctypes.Structure):
+    _fields_ = [
+        ("bmiHeader", _BitmapInfoHeader),
+        ("bmiColors", wintypes.DWORD * 3),
+    ]
 
 
 def imread_u(path: str | Path) -> Optional[np.ndarray]:
@@ -335,6 +398,21 @@ class GameWindow:
             "height": self.height,
         }
 
+    def refresh(self) -> None:
+        """Atualiza posição/tamanho caso a janela tenha sido movida ou redimensionada."""
+        if win32gui is None:
+            return
+        try:
+            if not win32gui.IsWindow(self.hwnd):
+                return
+            left, top = win32gui.ClientToScreen(self.hwnd, (0, 0))
+            _, _, width, height = win32gui.GetClientRect(self.hwnd)
+            if width >= 100 and height >= 100:
+                self.client_x, self.client_y = left, top
+                self.width, self.height = width, height
+        except Exception:
+            pass
+
 
 def find_game_window(title_filter: str = "Fortnite") -> GameWindow:
     if win32gui is None:
@@ -391,6 +469,7 @@ class ScreenGrabber:
         return bool(win32gui) and win32gui.GetForegroundWindow() == self.window.hwnd
 
     def capture(self) -> np.ndarray:
+        self.window.refresh()
         if win32gui is not None and win32gui.IsIconic(self.window.hwnd):
             raise ScreenCaptureError("A janela do Fortnite está minimizada.")
         try:
@@ -404,3 +483,104 @@ class ScreenGrabber:
         if frame.shape[2] == 4:
             return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
         return frame
+
+    def capture_background(self) -> np.ndarray:
+        """Captura a janela mesmo encoberta, sem trazê-la para a frente.
+
+        Usa PrintWindow com PW_RENDERFULLCONTENT, que pede ao jogo (DWM) para
+        renderizar o conteúdo completo em um bitmap. Funciona com o Fortnite em
+        modo janela sem borda e não minimizado; tela cheia exclusiva não é
+        suportada pelo Windows para captura em segundo plano.
+        """
+        if win32gui is None:
+            raise ScreenCaptureError("pywin32 não está instalado corretamente.")
+        self.window.refresh()
+        hwnd = self.window.hwnd
+        try:
+            if not win32gui.IsWindow(hwnd):
+                raise ScreenCaptureError("A janela do Fortnite não está mais disponível.")
+            if win32gui.IsIconic(hwnd):
+                raise ScreenCaptureError(
+                    "A janela do Fortnite está minimizada. Restaure-a para usar o modo segundo plano."
+                )
+            left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+            window_width, window_height = right - left, bottom - top
+            if window_width < 100 or window_height < 100:
+                raise ScreenCaptureError(
+                    "A janela do Fortnite está sem tamanho válido para captura."
+                )
+        except ScreenCaptureError:
+            raise
+        except Exception as exc:
+            raise ScreenCaptureError(f"Falha ao obter a janela do Fortnite: {exc}") from exc
+
+        window_dc = _user32.GetWindowDC(hwnd)
+        if not window_dc:
+            raise ScreenCaptureError("Não consegui obter o contexto da janela do Fortnite.")
+        memory_dc = _gdi32.CreateCompatibleDC(window_dc)
+        bitmap = _gdi32.CreateCompatibleBitmap(window_dc, window_width, window_height)
+        if not memory_dc or not bitmap:
+            if bitmap:
+                _gdi32.DeleteObject(bitmap)
+            if memory_dc:
+                _gdi32.DeleteDC(memory_dc)
+            _user32.ReleaseDC(hwnd, window_dc)
+            raise ScreenCaptureError("Não consegui criar o bitmap de captura.")
+
+        old_object = _gdi32.SelectObject(memory_dc, bitmap)
+        try:
+            ok = bool(_user32.PrintWindow(hwnd, memory_dc, PW_RENDERFULLCONTENT))
+            if not ok:
+                ok = bool(_user32.PrintWindow(hwnd, memory_dc, 0))
+            if not ok:
+                raise ScreenCaptureError(
+                    "O Windows não conseguiu renderizar a janela do Fortnite. "
+                    "Use o modo janela sem borda e não minimize o jogo."
+                )
+
+            bmi = _BitmapInfo()
+            header = bmi.bmiHeader
+            header.biSize = ctypes.sizeof(_BitmapInfoHeader)
+            header.biWidth = window_width
+            header.biHeight = -window_height  # negativo = linhas de cima para baixo
+            header.biPlanes = 1
+            header.biBitCount = 32
+            header.biCompression = BI_RGB
+            buffer = ctypes.create_string_buffer(window_width * window_height * 4)
+
+            # A documentação do GetDIBits pede que o bitmap não esteja
+            # selecionado no DC na hora da leitura.
+            _gdi32.SelectObject(memory_dc, old_object)
+            old_object = None
+            lines = _gdi32.GetDIBits(
+                memory_dc,
+                bitmap,
+                0,
+                window_height,
+                buffer,
+                ctypes.byref(bmi),
+                0,
+            )
+            if lines == 0:
+                raise ScreenCaptureError("Falha ao ler os pixels da janela do Fortnite.")
+
+            frame = np.frombuffer(buffer, dtype=np.uint8).reshape(
+                (window_height, window_width, 4)
+            )
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+
+            client_left, client_top = win32gui.ClientToScreen(hwnd, (0, 0))
+            _, _, client_width, client_height = win32gui.GetClientRect(hwnd)
+            crop_x = max(0, client_left - left)
+            crop_y = max(0, client_top - top)
+            crop_width = min(client_width, window_width - crop_x)
+            crop_height = min(client_height, window_height - crop_y)
+            if crop_width >= 100 and crop_height >= 100:
+                frame = frame[crop_y : crop_y + crop_height, crop_x : crop_x + crop_width]
+            return frame
+        finally:
+            if old_object is not None:
+                _gdi32.SelectObject(memory_dc, old_object)
+            _gdi32.DeleteObject(bitmap)
+            _gdi32.DeleteDC(memory_dc)
+            _user32.ReleaseDC(hwnd, window_dc)

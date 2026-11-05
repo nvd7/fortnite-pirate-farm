@@ -10,7 +10,8 @@ import sys
 import time
 from pathlib import Path
 
-from piratebot.config import ASSETS, load_config
+from piratebot import power
+from piratebot.config import ASSETS, LOGS, load_config
 from piratebot.logwatcher import LogWatcher, parse_line
 from piratebot.vision import TokenDetector, imread_u
 
@@ -141,6 +142,37 @@ def main() -> int:
             f"score={hit.score:.2f}" if hit else "limpo",
         )
 
+    background_lobby = LOGS / "fortnite_bg.png"
+    if background_lobby.exists():
+        print()
+        print("Captura real em segundo plano (logs/fortnite_bg.png):")
+        image = imread_u(background_lobby)
+        if image is not None:
+            detection = detector.detect(image)
+            check(
+                "Sem falso positivo de token na captura em segundo plano",
+                not detection.found,
+                (
+                    f"falso positivo: {detection.best.kind} score={detection.best.score:.2f}"
+                    if detection.best
+                    else "limpo"
+                ),
+            )
+            hit = detector.find_play_button(image)
+            check(
+                "Botão JOGAR na captura em segundo plano",
+                hit is not None,
+                f"score={hit.score:.2f}" if hit else "não encontrado",
+            )
+
+    print()
+    print("Prevenção de suspensão do Windows:")
+    power.set_awake("selftest", True)
+    check("Estado de PC acordado ativado", power.is_awake())
+    power.set_awake("selftest", False)
+    check("Estado de PC acordado liberado", not power.is_awake())
+    power.shutdown()
+
     print()
     print("Parser do log:")
     samples = [
@@ -201,7 +233,7 @@ def main() -> int:
                 f"estado inicial: {state}",
             )
         else:
-            check("Log real acessível", False, f"não encontrado: {path}")
+            print(f"[IGNORADO] Log real não encontrado: {path}")
     except Exception as exc:
         check("Log real acessível", False, str(exc))
 
@@ -232,6 +264,33 @@ def main() -> int:
             print(f"JOGAR: {'sim' if play else 'não'}")
             print(f"Suspensão: {'sim' if suspend else 'não'}")
             check("Captura ao vivo", True)
+
+            print()
+            print("Captura em segundo plano (PrintWindow, sem focar o jogo):")
+            background_frame = grabber.capture_background()
+            background_detection = detector.detect(background_frame)
+            background_play = detector.find_play_button(background_frame)
+            background_suspend = detector.find_suspend_button(background_frame)
+            print(
+                f"Janela {background_frame.shape[1]}x{background_frame.shape[0]}; "
+                f"primeiro plano: {grabber.is_foreground()}"
+            )
+            print(
+                "Token: "
+                + (
+                    f"SIM ({background_detection.best.kind}, "
+                    f"score {background_detection.best.score:.2f})"
+                    if background_detection.found and background_detection.best
+                    else "não"
+                )
+            )
+            print(f"JOGAR: {'sim' if background_play else 'não'}")
+            print(f"Suspensão: {'sim' if background_suspend else 'não'}")
+            check(
+                "Captura em segundo plano",
+                True,
+                f"{background_frame.shape[1]}x{background_frame.shape[0]}",
+            )
         except Exception as exc:
             check("Captura ao vivo", False, str(exc))
 

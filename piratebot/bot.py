@@ -1,7 +1,6 @@
 """Máquina de estados do farm: lobby -> matchmaking -> AFK -> recompensas -> lobby."""
 from __future__ import annotations
 
-import ctypes
 import logging
 import queue
 import threading
@@ -10,6 +9,7 @@ import traceback
 from enum import StrEnum
 from typing import Optional
 
+from . import power
 from .config import ASSETS, LOGS, AppConfig
 from .controller import GameController
 from .logwatcher import STATE_LABELS, STATE_LOBBY, STATE_LOGIN, STATE_MATCH, LogEvent, LogWatcher
@@ -23,21 +23,6 @@ from .vision import (
 )
 
 _log = logging.getLogger("piratebot")
-
-ES_CONTINUOUS = 0x80000000
-ES_SYSTEM_REQUIRED = 0x00000001
-ES_DISPLAY_REQUIRED = 0x00000002
-
-
-def _set_keep_awake(enable: bool) -> None:
-    """Impede (ou libera) a suspensão automática do Windows."""
-    try:
-        flags = ES_CONTINUOUS
-        if enable:
-            flags |= ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED
-        ctypes.windll.kernel32.SetThreadExecutionState(flags)
-    except Exception:
-        pass
 
 
 class Phase(StrEnum):
@@ -186,11 +171,17 @@ class PirateBot:
         self._last_focus_at = time.time()
 
         if not self.config.behavior.dry_run:
-            _set_keep_awake(True)
+            power.set_awake("bot", True)
             self._emit_log(
                 "Suspensão automática do Windows desativada durante a execução.",
                 "info",
             )
+            if self.config.behavior.background_mode:
+                self._emit_log(
+                    "Modo segundo plano ativo: captura sem roubar o foco e foco rápido "
+                    "de ~1s apenas para clicar. Não minimize o Fortnite.",
+                    "info",
+                )
             self._resume_if_suspended(force_focus=True)
 
         if self.config.behavior.dry_run:
@@ -467,15 +458,17 @@ class PirateBot:
         assert self._grabber is not None
         assert self._detector is not None
 
-        if self._resume_if_suspended(force_focus=True):
+        background = self.config.behavior.background_mode
+        if self._resume_if_suspended(force_focus=not background):
             time.sleep(0.8)
 
-        if not self._controller.ensure_foreground(force=True):
-            self._emit_log("Não consegui focar o Fortnite; tentarei de novo em 5s.", "warn")
-            self._lobby_ready_at = time.time() + 5.0
-            return
+        if not background:
+            if not self._controller.ensure_foreground(force=True):
+                self._emit_log("Não consegui focar o Fortnite; tentarei de novo em 5s.", "warn")
+                self._lobby_ready_at = time.time() + 5.0
+                return
 
-        time.sleep(0.4)
+        time.sleep(0.1 if background else 0.4)
         frame = self._capture("lobby")
         hit = self._detector.find_play_button(frame) if frame is not None else None
 
@@ -598,7 +591,10 @@ class PirateBot:
                     "info",
                 )
 
-        if now - self._last_focus_at > self.config.behavior.focus_interval:
+        if (
+            not self.config.behavior.background_mode
+            and now - self._last_focus_at > self.config.behavior.focus_interval
+        ):
             self._last_focus_at = now
             if self._controller is not None:
                 self._controller.focus_if_needed()
@@ -817,7 +813,7 @@ class PirateBot:
 
     def _cleanup(self) -> None:
         self.stop_event.set()
-        _set_keep_awake(False)
+        power.set_awake("bot", False)
         if self._watcher is not None:
             try:
                 self._watcher.join(timeout=1.5)
@@ -829,6 +825,20 @@ class PirateBot:
     def _capture(self, label: str, log_errors: bool = True) -> Optional[object]:
         if self._grabber is None or self._controller is None:
             return None
+
+        if self.config.behavior.background_mode:
+            try:
+                return self._grabber.capture_background()
+            except ScreenCaptureError as exc:
+                now = time.time()
+                if log_errors and now - self._last_capture_error >= 10.0:
+                    self._last_capture_error = now
+                    self._emit_log(
+                        f"Falha na captura em segundo plano ({label}): {exc}",
+                        "warn",
+                    )
+                return None
+
         if not self._grabber.is_foreground():
             if self.config.behavior.dry_run:
                 if log_errors:
@@ -870,16 +880,21 @@ class PirateBot:
             return False
         if self.config.behavior.dry_run:
             return False
-        if not self._grabber.is_foreground():
-            if self._controller.is_own_process_foreground() and not force_focus:
+        if self.config.behavior.background_mode:
+            frame = self._capture("suspensão", log_errors=False)
+            if frame is None:
                 return False
-            if not self._controller.ensure_foreground(force=force_focus):
+        else:
+            if not self._grabber.is_foreground():
+                if self._controller.is_own_process_foreground() and not force_focus:
+                    return False
+                if not self._controller.ensure_foreground(force=force_focus):
+                    return False
+                time.sleep(0.35)
+            try:
+                frame = self._grabber.capture()
+            except ScreenCaptureError:
                 return False
-            time.sleep(0.35)
-        try:
-            frame = self._grabber.capture()
-        except ScreenCaptureError:
-            return False
         hit = self._detector.find_suspend_button(frame)
         if hit is None:
             return False

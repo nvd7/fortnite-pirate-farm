@@ -10,7 +10,7 @@ import threading
 import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import messagebox
 
 # Deixa as coordenadas em pixels físicos (importante em telas com escala).
 try:
@@ -21,8 +21,9 @@ except Exception:
     except Exception:
         pass
 
+from piratebot import power
 from piratebot.bot import PHASE_LABELS, Phase, PirateBot
-from piratebot.config import ASSETS, LOGS, ROOT, load_config
+from piratebot.config import ASSETS, LOGS, ROOT, load_config, save_config
 from piratebot.hotkey import HotkeyListener
 from piratebot.vision import (
     ScreenGrabber,
@@ -32,16 +33,36 @@ from piratebot.vision import (
 )
 
 APP_TITLE = "Pirate Farm — Fortnite"
+APP_VERSION = "1.1.0"
+
+# Paleta do modo escuro.
+BG = "#0b1220"
+BG_SOFT = "#0f1a2c"
+CARD = "#111d31"
+CARD_BORDER = "#22314b"
+SUBTLE = "#1a2940"
+SUBTLE_HOVER = "#243653"
+TEXT = "#e6eef9"
+MUTED = "#93a4bd"
+DIM = "#64748b"
+GOLD = "#f5c451"
+GREEN = "#34d399"
+GREEN_DARK = "#0f766e"
+GREEN_DEEP = "#123c33"
+RED = "#f87171"
+RED_DARK = "#991b1b"
+AMBER = "#fbbf24"
+BLUE = "#60a5fa"
 
 PHASE_STYLE = {
-    Phase.STARTING.value: ("Iniciando...", "#2563eb"),
-    Phase.LOBBY.value: ("No lobby", "#2563eb"),
-    Phase.QUEUING.value: ("Procurando partida", "#7c3aed"),
-    Phase.MATCH.value: ("Em partida — AFK", "#0f766e"),
-    Phase.POSTMATCH.value: ("Fim de partida", "#b45309"),
-    Phase.FINISHED.value: ("TOKEN ENCONTRADO!", "#15803d"),
-    Phase.ERROR.value: ("Erro", "#b91c1c"),
-    Phase.STOPPED.value: ("Parado", "#6b7280"),
+    Phase.STARTING.value: ("Iniciando...", BLUE),
+    Phase.LOBBY.value: ("No lobby", BLUE),
+    Phase.QUEUING.value: ("Procurando partida", "#c084fc"),
+    Phase.MATCH.value: ("Em partida — AFK", "#2dd4bf"),
+    Phase.POSTMATCH.value: ("Fim de partida", AMBER),
+    Phase.FINISHED.value: ("TOKEN ENCONTRADO!", "#4ade80"),
+    Phase.ERROR.value: ("Erro", RED),
+    Phase.STOPPED.value: ("Parado", "#94a3b8"),
 }
 
 
@@ -64,6 +85,8 @@ class PirateFarmApp:
         self._logs_opened = False
         self._success_scheduled = False
         self._log_line_count = 0
+        self._manual_awake = False
+        self._last_power_refresh = 0.0
         self._build_ui()
         self._start_hotkey()
         self.root.after(100, self._poll)
@@ -72,44 +95,63 @@ class PirateFarmApp:
     # ------------------------------------------------------------------ UI
     def _build_ui(self) -> None:
         self.root.title(APP_TITLE)
-        self.root.geometry("720x640")
-        self.root.minsize(620, 520)
-        self.root.configure(bg="#f1f5f9")
+        self.root.geometry("760x720")
+        self.root.minsize(680, 600)
+        self.root.configure(bg=BG)
 
         try:
-            icon = tk.PhotoImage(file=str(ASSETS / "coin_inner.png"))
+            icon = tk.PhotoImage(file=str(ASSETS / "logo_256.png"))
             self.root.iconphoto(True, icon)
             self._icon = icon
         except Exception:
             pass
 
-        container = tk.Frame(self.root, bg="#f1f5f9", padx=18, pady=14)
+        container = tk.Frame(self.root, bg=BG, padx=20, pady=16)
         container.pack(fill="both", expand=True)
 
-        header = tk.Frame(container, bg="#f1f5f9")
-        header.pack(fill="x")
+        # ---------------------------------------------------------- cabeçalho
+        header = tk.Frame(container, bg=BG)
+        header.pack(fill="x", pady=(0, 12))
+        try:
+            self._header_logo = tk.PhotoImage(file=str(ASSETS / "logo_64.png"))
+            tk.Label(header, image=self._header_logo, bg=BG).pack(side="left", padx=(0, 14))
+        except Exception:
+            self._header_logo = None
+
+        titles = tk.Frame(header, bg=BG)
+        titles.pack(side="left", fill="x", expand=True)
         tk.Label(
-            header,
+            titles,
             text="Pirate Farm",
-            font=("Segoe UI", 22, "bold"),
-            fg="#0f172a",
-            bg="#f1f5f9",
+            font=("Segoe UI", 23, "bold"),
+            fg=TEXT,
+            bg=BG,
         ).pack(anchor="w")
         tk.Label(
-            header,
-            text="Farm AFK do token Pirate Shop Access — Fortnite",
+            titles,
+            text=f"Farm AFK do token Pirate Shop Access · Fortnite · v{APP_VERSION}",
             font=("Segoe UI", 10),
-            fg="#475569",
-            bg="#f1f5f9",
-        ).pack(anchor="w", pady=(0, 10))
+            fg=MUTED,
+            bg=BG,
+        ).pack(anchor="w", pady=(1, 0))
+        tk.Label(
+            header,
+            text="PT-BR",
+            font=("Segoe UI", 8, "bold"),
+            fg="#86efac",
+            bg=GREEN_DEEP,
+            padx=8,
+            pady=4,
+        ).pack(side="right", anchor="n")
 
+        # ------------------------------------------------------------- status
         status_card = tk.Frame(
             container,
-            bg="#ffffff",
-            highlightbackground="#cbd5e1",
+            bg=CARD,
+            highlightbackground=CARD_BORDER,
             highlightthickness=1,
-            padx=16,
-            pady=12,
+            padx=18,
+            pady=14,
         )
         status_card.pack(fill="x")
 
@@ -117,8 +159,8 @@ class PirateFarmApp:
             status_card,
             text="Pronto para iniciar",
             font=("Segoe UI", 18, "bold"),
-            fg="#475569",
-            bg="#ffffff",
+            fg=MUTED,
+            bg=CARD,
             anchor="w",
         )
         self.status_label.pack(fill="x")
@@ -130,45 +172,58 @@ class PirateFarmApp:
                 "e clique em INICIAR."
             ),
             font=("Segoe UI", 10),
-            fg="#64748b",
-            bg="#ffffff",
+            fg=MUTED,
+            bg=CARD,
             anchor="w",
             justify="left",
-            wraplength=650,
+            wraplength=670,
         )
-        self.detail_label.pack(fill="x", pady=(2, 8))
+        self.detail_label.pack(fill="x", pady=(3, 10))
 
-        stats = tk.Frame(status_card, bg="#ffffff")
+        stats = tk.Frame(status_card, bg=CARD)
         stats.pack(fill="x")
         self.matches_label = tk.Label(
-            stats, text="Partidas: 0", font=("Segoe UI", 10, "bold"),
-            fg="#334155", bg="#ffffff"
+            stats,
+            text="Partidas: 0",
+            font=("Segoe UI", 10, "bold"),
+            fg="#cbd5e1",
+            bg=CARD,
         )
         self.matches_label.pack(side="left")
         self.token_label = tk.Label(
-            stats, text="Token: não", font=("Segoe UI", 10, "bold"),
-            fg="#b91c1c", bg="#ffffff"
+            stats,
+            text="Token: não",
+            font=("Segoe UI", 10, "bold"),
+            fg=RED,
+            bg=CARD,
         )
         self.token_label.pack(side="left", padx=(24, 0))
         self.time_label = tk.Label(
-            stats, text="Tempo: 00:00:00", font=("Segoe UI", 10),
-            fg="#64748b", bg="#ffffff"
+            stats,
+            text="Tempo: 00:00:00",
+            font=("Segoe UI", 10),
+            fg=MUTED,
+            bg=CARD,
         )
         self.time_label.pack(side="right")
 
-        controls = tk.Frame(container, bg="#f1f5f9")
-        controls.pack(fill="x", pady=(12, 6))
+        # ----------------------------------------------------------- controles
+        controls = tk.Frame(container, bg=BG)
+        controls.pack(fill="x", pady=(14, 8))
 
         self.start_button = tk.Button(
             controls,
             text="INICIAR",
             font=("Segoe UI", 12, "bold"),
-            bg="#16a34a",
+            bg="#15803d",
             fg="#ffffff",
-            activebackground="#15803d",
+            activebackground="#166534",
             activeforeground="#ffffff",
+            disabledforeground="#64748b",
             relief="flat",
-            padx=22,
+            bd=0,
+            highlightthickness=0,
+            padx=24,
             pady=10,
             cursor="hand2",
             command=self._start_bot,
@@ -179,11 +234,14 @@ class PirateFarmApp:
             controls,
             text="PARAR (F8)",
             font=("Segoe UI", 11, "bold"),
-            bg="#dc2626",
+            bg=RED_DARK,
             fg="#ffffff",
-            activebackground="#b91c1c",
+            activebackground="#7f1d1d",
             activeforeground="#ffffff",
+            disabledforeground="#64748b",
             relief="flat",
+            bd=0,
+            highlightthickness=0,
             padx=18,
             pady=10,
             cursor="hand2",
@@ -196,12 +254,15 @@ class PirateFarmApp:
             controls,
             text="Já tenho o token",
             font=("Segoe UI", 10, "bold"),
-            bg="#f59e0b",
-            fg="#1f2937",
+            bg=GOLD,
+            fg="#1c1917",
             activebackground="#d97706",
-            activeforeground="#1f2937",
+            activeforeground="#1c1917",
+            disabledforeground="#64748b",
             relief="flat",
-            padx=14,
+            bd=0,
+            highlightthickness=0,
+            padx=15,
             pady=10,
             cursor="hand2",
             state="disabled",
@@ -209,107 +270,424 @@ class PirateFarmApp:
         )
         self.token_button.pack(side="left", padx=(10, 0))
 
-        self.sim_var = tk.BooleanVar(value=self.config.behavior.dry_run)
-        self.sim_check = tk.Checkbutton(
-            controls,
-            text="Simulação (não clica no jogo)",
-            variable=self.sim_var,
-            font=("Segoe UI", 9),
-            fg="#475569",
-            bg="#f1f5f9",
-            activebackground="#f1f5f9",
-            anchor="w",
-        )
-        self.sim_check.pack(side="right")
+        # ------------------------------------------------------------ opções
+        options = tk.Frame(container, bg=BG)
+        options.pack(fill="x", pady=(0, 8))
 
-        tools = tk.Frame(container, bg="#f1f5f9")
+        self.bg_var = tk.BooleanVar(value=self.config.behavior.background_mode)
+        self.sim_var = tk.BooleanVar(value=self.config.behavior.dry_run)
+        self.bg_chip = self._chip(
+            options, "Segundo plano", self.bg_var, command=self._update_mode_hint
+        )
+        self.bg_chip.pack(side="left")
+        self.sim_chip = self._chip(options, "Simulação", self.sim_var)
+        self.sim_chip.pack(side="left", padx=(8, 0))
+
+        self.power_button = tk.Button(
+            options,
+            text="○  Manter PC acordado",
+            font=("Segoe UI", 9, "bold"),
+            bg=SUBTLE,
+            fg=MUTED,
+            activebackground=SUBTLE_HOVER,
+            activeforeground=TEXT,
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            padx=11,
+            pady=6,
+            cursor="hand2",
+            command=self._toggle_keep_awake,
+        )
+        self.power_button.pack(side="right")
+        self.power_label = tk.Label(
+            options,
+            text="PC acordado: não",
+            font=("Segoe UI", 9),
+            fg=DIM,
+            bg=BG,
+        )
+        self.power_label.pack(side="right", padx=(0, 10))
+
+        # ------------------------------------------------------------- tools
+        tools = tk.Frame(container, bg=BG)
         tools.pack(fill="x", pady=(0, 10))
-        tk.Button(
-            tools,
-            text="Testar detecção agora",
-            font=("Segoe UI", 9),
-            bg="#e2e8f0",
-            fg="#0f172a",
-            activebackground="#cbd5e1",
-            relief="flat",
-            padx=12,
-            pady=6,
-            cursor="hand2",
-            command=self._test_detection,
-        ).pack(side="left")
-        tk.Button(
-            tools,
-            text="Abrir pasta de logs",
-            font=("Segoe UI", 9),
-            bg="#e2e8f0",
-            fg="#0f172a",
-            activebackground="#cbd5e1",
-            relief="flat",
-            padx=12,
-            pady=6,
-            cursor="hand2",
-            command=self._open_logs,
-        ).pack(side="left", padx=(8, 0))
+        self._tool_button(tools, "Testar detecção agora", self._test_detection).pack(
+            side="left"
+        )
+        self._tool_button(tools, "Abrir logs", self._open_logs).pack(
+            side="left", padx=(8, 0)
+        )
+        self._tool_button(tools, "Limpar registro", self._clear_log).pack(
+            side="left", padx=(8, 0)
+        )
         tk.Label(
             tools,
             text="F8 = parada de emergência",
             font=("Segoe UI", 9),
-            fg="#64748b",
-            bg="#f1f5f9",
+            fg=DIM,
+            bg=BG,
         ).pack(side="right")
 
-        warning = tk.Frame(container, bg="#fef3c7", padx=10, pady=7)
-        warning.pack(fill="x", pady=(0, 8))
-        tk.Label(
-            warning,
-            text=(
-                "Mantenha o Fortnite em primeiro plano e não use o computador "
-                "enquanto o bot estiver rodando. O jogo entra em suspensão se perder o foco. "
-                "Desative o bloqueio de tela e a suspensão do Windows."
-            ),
+        # -------------------------------------------------------- dica de modo
+        self.mode_hint_card = tk.Frame(
+            container,
+            bg="#10243a",
+            highlightbackground="#1e3a5f",
+            highlightthickness=1,
+            padx=13,
+            pady=9,
+        )
+        self.mode_hint_card.pack(fill="x", pady=(0, 10))
+        self.mode_hint = tk.Label(
+            self.mode_hint_card,
+            text="",
             font=("Segoe UI", 9),
-            fg="#92400e",
-            bg="#fef3c7",
+            fg="#bfdbfe",
+            bg="#10243a",
             anchor="w",
             justify="left",
-            wraplength=650,
-        ).pack(fill="x")
+            wraplength=670,
+        )
+        self.mode_hint.pack(fill="x")
+        self._update_mode_hint()
 
-        log_header = tk.Frame(container, bg="#f1f5f9")
+        # --------------------------------------------------------------- log
+        log_header = tk.Frame(container, bg=BG)
         log_header.pack(fill="x")
         tk.Label(
             log_header,
-            text="Registro",
-            font=("Segoe UI", 10, "bold"),
-            fg="#334155",
-            bg="#f1f5f9",
+            text="REGISTRO",
+            font=("Segoe UI", 9, "bold"),
+            fg=MUTED,
+            bg=BG,
         ).pack(side="left")
+        tk.Label(
+            log_header,
+            text="tudo é gravado em logs\\piratefarm_*.log",
+            font=("Segoe UI", 8),
+            fg=DIM,
+            bg=BG,
+        ).pack(side="right")
 
-        log_frame = tk.Frame(container, bg="#0f172a")
+        log_frame = tk.Frame(
+            container,
+            bg="#08101d",
+            highlightbackground=CARD_BORDER,
+            highlightthickness=1,
+        )
         log_frame.pack(fill="both", expand=True)
-        scrollbar = ttk.Scrollbar(log_frame)
-        scrollbar.pack(side="right", fill="y")
         self.log_text = tk.Text(
             log_frame,
-            height=16,
+            height=14,
             wrap="word",
-            bg="#0f172a",
-            fg="#e2e8f0",
-            insertbackground="#e2e8f0",
+            bg="#08101d",
+            fg="#dbe7f5",
+            insertbackground="#dbe7f5",
+            selectbackground="#1d4ed8",
             font=("Consolas", 9),
             relief="flat",
-            padx=8,
-            pady=6,
-            yscrollcommand=scrollbar.set,
+            bd=0,
+            highlightthickness=0,
+            padx=10,
+            pady=8,
         )
         self.log_text.pack(side="left", fill="both", expand=True)
-        scrollbar.config(command=self.log_text.yview)
-        self.log_text.tag_config("info", foreground="#e2e8f0")
-        self.log_text.tag_config("success", foreground="#4ade80")
+        self.log_text.tag_config("ts", foreground="#64748b")
+        self.log_text.tag_config("info", foreground="#dbe7f5")
+        self.log_text.tag_config("success", foreground="#6ee7b7")
         self.log_text.tag_config("warn", foreground="#fbbf24")
         self.log_text.tag_config("error", foreground="#f87171")
-        self.log_text.tag_config("debug", foreground="#94a3b8")
+        self.log_text.tag_config("debug", foreground="#7c8ba1")
         self.log_text.configure(state="disabled")
+
+        footer = tk.Frame(container, bg=BG)
+        footer.pack(fill="x", pady=(8, 0))
+        tk.Label(
+            footer,
+            text="100% local · sem acesso à internet",
+            font=("Segoe UI", 8),
+            fg=DIM,
+            bg=BG,
+        ).pack(side="left")
+        tk.Label(
+            footer,
+            text="Squad Fill · interface em português",
+            font=("Segoe UI", 8),
+            fg=DIM,
+            bg=BG,
+        ).pack(side="right")
+
+        # A barra de título só aceita o modo escuro depois que a janela é
+        # realmente mapeada e ativada pelo Windows; reaplicamos ao mapear e
+        # sempre que a janela ganha foco (o DWM descarta a cor no primeiro
+        # desenho se ela for definida cedo demais).
+        self.root.bind(
+            "<Map>",
+            lambda _event: self.root.after(
+                250, lambda: self._apply_dark_titlebar(self.root)
+            ),
+        )
+        self.root.bind(
+            "<FocusIn>",
+            lambda _event: self._apply_dark_titlebar(self.root),
+        )
+        for delay in (350, 1500, 3000):
+            self.root.after(delay, lambda: self._apply_dark_titlebar(self.root))
+
+    # ------------------------------------------------------------- widgets
+    def _chip(self, parent, text: str, variable: tk.BooleanVar, command=None):
+        button = tk.Button(
+            parent,
+            font=("Segoe UI", 9, "bold"),
+            bg=SUBTLE,
+            fg=MUTED,
+            activebackground=SUBTLE_HOVER,
+            activeforeground=TEXT,
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            padx=11,
+            pady=6,
+            cursor="hand2",
+            anchor="w",
+        )
+
+        def refresh() -> None:
+            selected = bool(variable.get())
+            button.config(
+                text=("●  " if selected else "○  ") + text,
+                bg=GREEN_DEEP if selected else SUBTLE,
+                fg="#86efac" if selected else MUTED,
+                activebackground=GREEN_DEEP if selected else SUBTLE_HOVER,
+                activeforeground="#bbf7d0" if selected else TEXT,
+            )
+
+        def toggle() -> None:
+            variable.set(not variable.get())
+            refresh()
+            if command is not None:
+                command()
+
+        button.config(command=toggle)
+        refresh()
+        return button
+
+    def _tool_button(self, parent, text: str, command):
+        return tk.Button(
+            parent,
+            text=text,
+            font=("Segoe UI", 9),
+            bg=SUBTLE,
+            fg="#cbd5e1",
+            activebackground=SUBTLE_HOVER,
+            activeforeground=TEXT,
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            padx=12,
+            pady=6,
+            cursor="hand2",
+            command=command,
+        )
+
+    def _update_mode_hint(self) -> None:
+        if not hasattr(self, "mode_hint"):
+            return
+        if self.bg_var.get():
+            card_bg, border, foreground = "#10243a", "#1e3a5f", "#bfdbfe"
+            text = (
+                "Segundo plano ativo: você pode usar o PC durante as partidas. "
+                "O Fortnite não pode estar minimizado nem em tela cheia exclusiva — "
+                "use janela sem borda. O bot traz o jogo à frente por ~1s apenas "
+                "para clicar e devolve o foco ao seu programa."
+            )
+        else:
+            card_bg, border, foreground = "#2a2110", "#713f12", "#fde68a"
+            text = (
+                "Modo primeiro plano: deixe o Fortnite na frente e não use o PC "
+                "durante o farm. Se o jogo perder o foco, o bot tenta clicar em "
+                "CONTINUAR JOGANDO."
+            )
+        self.mode_hint_card.config(bg=card_bg, highlightbackground=border)
+        self.mode_hint.config(text=text, bg=card_bg, fg=foreground)
+
+    def _apply_dark_titlebar(self, window: tk.Misc) -> None:
+        try:
+            window.update_idletasks()
+            hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
+            dwm = ctypes.windll.dwmapi
+            enabled = ctypes.c_int(1)
+            for attribute in (20, 19):
+                if dwm.DwmSetWindowAttribute(
+                    hwnd, attribute, ctypes.byref(enabled), ctypes.sizeof(enabled)
+                ) == 0:
+                    break
+            caption = ctypes.c_int(0x0020120B)  # COLORREF de #0b1220
+            dwm.DwmSetWindowAttribute(
+                hwnd, 35, ctypes.byref(caption), ctypes.sizeof(caption)
+            )
+            text = ctypes.c_int(0x00F9EEE6)  # COLORREF de #e6eef9
+            dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(text), ctypes.sizeof(text))
+            border = ctypes.c_int(0x004B3122)  # COLORREF de #22314b
+            dwm.DwmSetWindowAttribute(
+                hwnd, 34, ctypes.byref(border), ctypes.sizeof(border)
+            )
+        except Exception:
+            pass
+
+    def _center_dialog(self, dialog: tk.Toplevel) -> None:
+        dialog.update_idletasks()
+        width, height = dialog.winfo_reqwidth(), dialog.winfo_reqheight()
+        x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - width) // 2)
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - height) // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+    def _dialog(self, title: str, message: str, confirm: bool = False) -> bool:
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.configure(bg=BG)
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        resultado = {"ok": False}
+
+        body = tk.Frame(dialog, bg=BG, padx=22, pady=18)
+        body.pack(fill="both", expand=True)
+        tk.Label(
+            body,
+            text=title,
+            font=("Segoe UI", 13, "bold"),
+            fg=TEXT,
+            bg=BG,
+            anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            body,
+            text=message,
+            font=("Segoe UI", 10),
+            fg=MUTED,
+            bg=BG,
+            justify="left",
+            wraplength=460,
+            anchor="w",
+        ).pack(fill="x", pady=(8, 18))
+
+        buttons = tk.Frame(body, bg=BG)
+        buttons.pack(fill="x")
+
+        def close(value: bool) -> None:
+            resultado["ok"] = value
+            dialog.destroy()
+
+        if confirm:
+            tk.Button(
+                buttons,
+                text="Cancelar",
+                font=("Segoe UI", 9, "bold"),
+                bg=SUBTLE,
+                fg="#cbd5e1",
+                activebackground=SUBTLE_HOVER,
+                activeforeground=TEXT,
+                relief="flat",
+                bd=0,
+                highlightthickness=0,
+                padx=16,
+                pady=7,
+                cursor="hand2",
+                command=lambda: close(False),
+            ).pack(side="right")
+            tk.Button(
+                buttons,
+                text="Sim, parar",
+                font=("Segoe UI", 9, "bold"),
+                bg=RED_DARK,
+                fg="#ffffff",
+                activebackground="#7f1d1d",
+                activeforeground="#ffffff",
+                relief="flat",
+                bd=0,
+                highlightthickness=0,
+                padx=16,
+                pady=7,
+                cursor="hand2",
+                command=lambda: close(True),
+            ).pack(side="right", padx=(0, 8))
+        else:
+            tk.Button(
+                buttons,
+                text="OK",
+                font=("Segoe UI", 9, "bold"),
+                bg=GREEN_DARK,
+                fg="#ffffff",
+                activebackground="#115e59",
+                activeforeground="#ffffff",
+                relief="flat",
+                bd=0,
+                highlightthickness=0,
+                padx=20,
+                pady=7,
+                cursor="hand2",
+                command=lambda: close(True),
+            ).pack(side="right")
+
+        dialog.protocol("WM_DELETE_WINDOW", lambda: close(False))
+        dialog.bind("<Escape>", lambda _event: close(False))
+        if not confirm:
+            dialog.bind("<Return>", lambda _event: close(True))
+        self._center_dialog(dialog)
+        dialog.after(80, lambda: self._apply_dark_titlebar(dialog))
+        dialog.wait_window()
+        return resultado["ok"]
+
+    def _clear_log(self) -> None:
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.configure(state="disabled")
+        self._log_line_count = 0
+        self._log("Registro limpo.", "debug")
+
+    # ------------------------------------------------------------- energia
+    def _toggle_keep_awake(self) -> None:
+        self._manual_awake = not self._manual_awake
+        power.set_awake("manual", self._manual_awake)
+        self._refresh_power_ui()
+        if self._manual_awake:
+            self._log(
+                "Prevenção de suspensão ativada: o Windows não vai dormir nem "
+                "desligar a tela por inatividade.",
+                "success",
+            )
+        else:
+            self._log(
+                "Prevenção de suspensão manual desativada. O bot ainda mantém o "
+                "PC acordado enquanto estiver rodando.",
+                "info",
+            )
+
+    def _refresh_power_ui(self) -> None:
+        if not hasattr(self, "power_button"):
+            return
+        selected = bool(self._manual_awake)
+        self.power_button.config(
+            text=("●  " if selected else "○  ") + "Manter PC acordado",
+            bg=GREEN_DEEP if selected else SUBTLE,
+            fg="#86efac" if selected else MUTED,
+            activebackground=GREEN_DEEP if selected else SUBTLE_HOVER,
+            activeforeground="#bbf7d0" if selected else TEXT,
+        )
+        active = power.is_awake()
+        if active:
+            reasons = power.reasons()
+            if "bot" in reasons and "manual" in reasons:
+                origin = "manual + bot"
+            elif "bot" in reasons:
+                origin = "automático"
+            else:
+                origin = "manual"
+            self.power_label.config(text=f"PC acordado: sim ({origin})", fg=GREEN)
+        else:
+            self.power_label.config(text="PC acordado: não", fg=DIM)
 
     def _start_hotkey(self) -> None:
         self.hotkey = HotkeyListener(lambda: self.ui_queue.put({"type": "hotkey"}))
@@ -328,6 +706,12 @@ class PirateFarmApp:
         self.manual_token.clear()
         self._success_scheduled = False
         self.config.behavior.dry_run = bool(self.sim_var.get())
+        self.config.behavior.background_mode = bool(self.bg_var.get())
+        try:
+            save_config(self.config)
+        except Exception as exc:
+            self._log(f"Não consegui salvar as preferências: {exc}", "debug")
+
         self.bot = PirateBot(
             self.config,
             self.ui_queue,
@@ -340,12 +724,20 @@ class PirateFarmApp:
             "success",
         )
         if not self.config.behavior.dry_run:
-            self._log(
-                "O bot vai colocar o Fortnite em primeiro plano. Não mexa no PC.",
-                "warn",
-            )
+            if self.config.behavior.background_mode:
+                self._log(
+                    "Modo segundo plano ativo: captura sem roubar o foco e foco "
+                    "rápido de ~1s apenas para clicar. Não minimize o Fortnite.",
+                    "success",
+                )
+            else:
+                self._log(
+                    "Modo primeiro plano: não use o PC enquanto o bot estiver rodando.",
+                    "warn",
+                )
         self.bot.start()
         self._update_buttons()
+        self._refresh_power_ui()
 
     def _stop_bot(self, reason: str) -> None:
         self.stop_event.set()
@@ -354,6 +746,7 @@ class PirateFarmApp:
         self._log(reason, "warn")
         self._set_status(Phase.STOPPED.value, reason)
         self._update_buttons()
+        self._refresh_power_ui()
 
     def _mark_token(self) -> None:
         if self.bot is None or not self.bot.is_running():
@@ -371,15 +764,26 @@ class PirateFarmApp:
         )
 
     def _test_detection(self) -> None:
-        self._log("Capturando a tela para testar a detecção...", "info")
-        threading.Thread(target=self._run_detection_test, name="DetectionTest", daemon=True).start()
+        use_background = bool(self.bg_var.get())
+        mode = "em segundo plano" if use_background else "em primeiro plano"
+        self._log(f"Capturando a tela {mode} para testar a detecção...", "info")
+        threading.Thread(
+            target=self._run_detection_test,
+            args=(use_background,),
+            name="DetectionTest",
+            daemon=True,
+        ).start()
 
-    def _run_detection_test(self) -> None:
+    def _run_detection_test(self, use_background: bool) -> None:
         try:
             window = find_game_window(self.config.game.window_title)
             grabber = ScreenGrabber(window)
             detector = TokenDetector(ASSETS, self.config.detection)
-            frame = grabber.capture()
+            frame = (
+                grabber.capture_background()
+                if use_background
+                else grabber.capture()
+            )
             token = detector.detect(frame)
             play = detector.find_play_button(frame)
             suspend = detector.find_suspend_button(frame)
@@ -392,6 +796,7 @@ class PirateFarmApp:
                     "token": token.found,
                     "best": token.best,
                     "game_foreground": grabber.is_foreground(),
+                    "background": use_background,
                     "play": play,
                     "suspend": suspend,
                     "path": str(path),
@@ -417,6 +822,10 @@ class PirateFarmApp:
                 break
             self._handle_message(message)
         self._update_buttons()
+        now = time.time()
+        if now - self._last_power_refresh >= 0.5:
+            self._last_power_refresh = now
+            self._refresh_power_ui()
         self.root.after(100, self._poll)
 
     def _handle_message(self, message: dict) -> None:
@@ -433,14 +842,14 @@ class PirateFarmApp:
             token = bool(message.get("token_found"))
             self.token_label.config(
                 text="Token: SIM" if token else "Token: não",
-                fg="#15803d" if token else "#b91c1c",
+                fg=GREEN if token else RED,
             )
             self.time_label.config(
                 text=f"Tempo: {_format_elapsed(message.get('elapsed', 0))}"
             )
 
         elif kind == "token":
-            self.token_label.config(text="Token: SIM", fg="#15803d")
+            self.token_label.config(text="Token: SIM", fg=GREEN)
             self._set_status(
                 Phase.MATCH.value,
                 "Token detectado! Vou esperar a partida terminar para encerrar.",
@@ -449,7 +858,7 @@ class PirateFarmApp:
         elif kind == "success":
             text = message.get("text", "Token encontrado!")
             self._set_status(Phase.FINISHED.value, text)
-            self.token_label.config(text="Token: SIM", fg="#15803d")
+            self.token_label.config(text="Token: SIM", fg=GREEN)
             self._log(text, "success")
             self._write_success_file(text)
             self._schedule_auto_close()
@@ -460,7 +869,7 @@ class PirateFarmApp:
             self._log(text, "error")
             self.root.bell()
             try:
-                messagebox.showerror(APP_TITLE, text, parent=self.root)
+                self._dialog("Erro no Pirate Farm", text)
             except Exception:
                 pass
 
@@ -486,8 +895,14 @@ class PirateFarmApp:
     def _handle_test_result(self, message: dict) -> None:
         width, height = message.get("size", (0, 0))
         foreground = message.get("game_foreground")
+        background = bool(message.get("background"))
         self._log(f"Captura de teste: {width}x{height}.", "info")
-        if not foreground:
+        if background:
+            self._log(
+                "Captura em segundo plano concluída; o foco do jogo não foi alterado.",
+                "info",
+            )
+        elif not foreground:
             self._log(
                 "A janela do Fortnite não estava em primeiro plano; "
                 "a captura pode mostrar outra janela.",
@@ -548,7 +963,7 @@ class PirateFarmApp:
 
     # ------------------------------------------------------------- helpers
     def _set_status(self, phase: str, detail: str) -> None:
-        label, color = PHASE_STYLE.get(phase, (PHASE_LABELS.get(phase, phase), "#475569"))
+        label, color = PHASE_STYLE.get(phase, (PHASE_LABELS.get(phase, phase), MUTED))
         self.status_label.config(text=label, fg=color)
         self.detail_label.config(text=detail)
 
@@ -558,7 +973,8 @@ class PirateFarmApp:
         tag = level if level in ("info", "success", "warn", "error", "debug") else "info"
         timestamp = time.strftime("%H:%M:%S")
         self.log_text.configure(state="normal")
-        self.log_text.insert("end", f"[{timestamp}] {text}\n", tag)
+        self.log_text.insert("end", f"[{timestamp}] ", "ts")
+        self.log_text.insert("end", f"{text}\n", tag)
         self._log_line_count += 1
         if self._log_line_count > 2500:
             self.log_text.delete("1.0", "600.0")
@@ -568,9 +984,47 @@ class PirateFarmApp:
 
     def _update_buttons(self) -> None:
         running = bool(self.bot is not None and self.bot.is_running())
-        self.start_button.config(state="disabled" if running else "normal")
-        self.stop_button.config(state="normal" if running else "disabled")
-        self.token_button.config(state="normal" if running else "disabled")
+        if running:
+            self.start_button.config(
+                state="disabled",
+                bg="#123524",
+                fg="#5f7a6b",
+                disabledforeground="#5f7a6b",
+                cursor="arrow",
+            )
+            self.stop_button.config(
+                state="normal",
+                bg=RED_DARK,
+                fg="#ffffff",
+                cursor="hand2",
+            )
+            self.token_button.config(
+                state="normal",
+                bg=GOLD,
+                fg="#1c1917",
+                cursor="hand2",
+            )
+        else:
+            self.start_button.config(
+                state="normal",
+                bg="#15803d",
+                fg="#ffffff",
+                cursor="hand2",
+            )
+            self.stop_button.config(
+                state="disabled",
+                bg="#3a1a1a",
+                fg="#8a6a6a",
+                disabledforeground="#8a6a6a",
+                cursor="arrow",
+            )
+            self.token_button.config(
+                state="disabled",
+                bg="#3a2f16",
+                fg="#8a7a55",
+                disabledforeground="#8a7a55",
+                cursor="arrow",
+            )
 
     def _write_success_file(self, text: str) -> None:
         try:
@@ -594,10 +1048,10 @@ class PirateFarmApp:
 
     def _on_close(self, force: bool = False) -> None:
         if not force and self.bot is not None and self.bot.is_running():
-            if not messagebox.askyesno(
-                APP_TITLE,
-                "O bot está rodando. Deseja parar e sair?",
-                parent=self.root,
+            if not self._dialog(
+                "Sair do Pirate Farm",
+                "O bot está rodando. Deseja parar o farm e sair?",
+                confirm=True,
             ):
                 return
         self.stop_event.set()
@@ -605,6 +1059,8 @@ class PirateFarmApp:
             self.bot.stop()
         if self.hotkey is not None:
             self.hotkey.stop()
+        power.set_awake("manual", False)
+        power.shutdown()
         self.root.destroy()
 
 
