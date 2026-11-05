@@ -17,10 +17,12 @@ e o projeto usa versionamento semântico.
 - Fallback **ESC → Voltar ao Lobby** quando o resumo da partida não exibe
   botões, incluindo o caso em que o jogador local morre sem companheiros vivos
   (`No teammates available to follow`).
-- Guia de validação supervisionada, mapa da arquitetura e checklist de release
-  em `docs/`.
+- Guia de validação supervisionada, mapa da arquitetura, guia de calibragem de
+  templates e checklist de release em `docs/`.
 - Diagnóstico `tools/check_postmatch.py` para inspecionar o resumo e o menu sem
   clicar no jogo.
+- Verificador `tools/check_docs.py` para encontrar links relativos quebrados na
+  documentação.
 
 ### Alterado
 
@@ -33,10 +35,11 @@ e o projeto usa versionamento semântico.
   ESC, evitando fechar o menu por engano.
 - A transição do resumo para a partida seguinte volta a contabilizar a nova
   partida.
-- Autoteste ampliado para 72 verificações, cobrindo pós-partida sem ENTER/ESPAÇO,
-  menu novo, morte sem companheiros, contagem de partidas e o diagnóstico visual.
-- O workflow de CI agora salva a saída do autoteste e publica os artefatos quando
-  a execução falha.
+- Autoteste ampliado para 75 verificações, cobrindo pós-partida sem ENTER/ESPAÇO,
+  menu novo, morte sem companheiros, contagem de partidas, diagnóstico visual e
+  links da documentação.
+- O workflow de CI agora verifica os links da documentação, salva a saída do
+  autoteste e publica os artefatos quando a execução falha.
 
 ### Removido
 
