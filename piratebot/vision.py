@@ -227,6 +227,10 @@ class TokenDetector:
             self.voltar_lobby = self._load("voltar_lobby.png")
         except FileNotFoundError:
             self.voltar_lobby = None
+        try:
+            self.menu_tab = self._load("menu_tab.png")
+        except FileNotFoundError:
+            self.menu_tab = None
 
         self._inner_gray = cv2.cvtColor(self.inner, cv2.COLOR_BGR2GRAY)
         self._frame_gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
@@ -461,6 +465,29 @@ class TokenDetector:
             image,
             self.voltar_lobby,
             self.config.voltar_lobby_score,
+            region=region,
+        )
+
+    def find_menu_tab_button(self, image: np.ndarray) -> Optional[ButtonHit]:
+        """Localiza a aba de três linhas do painel social.
+
+        No menu novo, ESC abre o painel social. O botão **Voltar ao Lobby**
+        só aparece depois de clicar nessa aba; por isso ela é procurada no
+        canto superior direito da tela.
+        """
+        if self.menu_tab is None:
+            return None
+        height, width = image.shape[:2]
+        region = (
+            int(width * 0.80),
+            int(height * 0.02),
+            int(width * 0.95),
+            int(height * 0.14),
+        )
+        return self._find_button(
+            image,
+            self.menu_tab,
+            self.config.menu_tab_score,
             region=region,
         )
 

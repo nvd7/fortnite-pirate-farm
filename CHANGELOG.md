@@ -4,6 +4,28 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto usa versionamento semântico.
 
+## [1.1.3] - 2026-11-05
+
+### Adicionado
+
+- Template `assets/menu_tab.png` e opção `detection.menu_tab_score` para a aba
+  de três linhas do painel social.
+
+### Corrigido
+
+- O evento `No teammates available to follow` não agenda mais a saída quando o
+  chat ainda lista preenchimentos vivos. Ele só é usado como confirmação depois
+  que o rastreamento do esquadrão fica vazio.
+- A saída automática agora abre a aba de opções do painel social antes de
+  clicar em **Voltar ao Lobby** e não pressiona ESC de novo quando o painel já
+  está aberto, evitando fechá-lo por engano.
+- O diagnóstico do pós-partida também mostra a confiança da aba de opções.
+
+### Alterado
+
+- Autoteste ampliado para 82 verificações, cobrindo a navegação do painel
+  social e o falso sinal de espectador com fills vivos.
+
 ## [1.1.2] - 2026-11-05
 
 ### Adicionado

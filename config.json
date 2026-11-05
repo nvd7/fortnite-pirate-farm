@@ -67,7 +67,8 @@
     "exit_icon_score": 0.6,
     "return_lobby_score": 0.65,
     "play_again_score": 0.65,
-    "voltar_lobby_score": 0.62
+    "voltar_lobby_score": 0.62,
+    "menu_tab_score": 0.75
   },
   "behavior": {
     "scan_interval_match": 1.6,

@@ -13,7 +13,7 @@
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="#requisitos"><img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white" alt="Windows 10/11"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licen%C3%A7a-MIT-34d399" alt="Licença MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.1.2-f5c451" alt="Versão 1.1.2"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.1.3-f5c451" alt="Versão 1.1.3"></a>
   <a href="https://github.com/nvd7/fortnite-pirate-farm/actions/workflows/tests.yml"><img src="https://github.com/nvd7/fortnite-pirate-farm/actions/workflows/tests.yml/badge.svg" alt="Testes"></a>
   <img src="https://img.shields.io/badge/idioma-PT--BR-0b1220" alt="Português do Brasil">
 </p>
@@ -38,7 +38,7 @@
 > local, captura a tela e envia cliques/teclas como um usuário.
 
 > [!IMPORTANT]
-> **Status:** v1.1.2 — pós-partida por clique visual, saída automática quando o
+> **Status:** v1.1.3 - pós-partida por clique visual, saída automática quando o
 > esquadrão fica vazio e retorno pelo menu **Voltar ao Lobby**. O primeiro farm
 > com partidas reais deve ser supervisionado, porque telas de recompensa e
 > mudanças de layout do Fortnite podem exigir calibração.
@@ -56,11 +56,12 @@ O ciclo é automático:
 
 1. O bot identifica o lobby e clica em **JOGAR**.
 2. Entra na partida e fica parado, observando o banner do token.
-3. Acompanha os preenchimentos pelo canal de chat do jogo. Se todos saírem (ou
-   morrerem) e a partida ficar sem companheiros vivos, abre o menu com **ESC** e
-   clica em **Voltar ao Lobby** para procurar outro esquadrão.
+3. Acompanha os preenchimentos pelo canal de chat do jogo. Quando o último fill
+   sai, abre o menu com **ESC**, clica na aba de opções e em **Voltar ao Lobby**
+   para procurar outro esquadrão.
 4. Ao terminar a partida, clica em **JOGAR NOVAMENTE** na tela de resumo. Se não
-   houver esse botão, abre o menu com **ESC** e usa **Voltar ao Lobby**.
+   houver esse botão, abre o menu com **ESC**, clica na aba de opções e usa
+   **Voltar ao Lobby**.
 5. Quando o token aparece, espera a partida acabar, retorna ao lobby, confirma a
    recompensa com **CLAIM ALL** (se a tela aparecer) e encerra.
 
@@ -83,10 +84,10 @@ o botão **CLAIM ALL**. Nada é enviado para a internet.
   lobby sem depender de temporizações fixas.
 - **Pós-partida por clique visual:** clica em **JOGAR NOVAMENTE** ou
   **RETORNAR AO LOBBY**; não usa ENTER/ESPAÇO, então o chat do jogo não abre.
-- **Saída automática do esquadrão:** quando todos os preenchimentos saem ou não
-  há mais companheiros vivos, o bot abre o menu e clica em **Voltar ao Lobby**.
-  A saída é cancelada se algum preenchimento voltar e nunca acontece com o token
-  encontrado.
+- **Saída automática do esquadrão:** quando o chat confirma que todos os
+  preenchimentos saíram, o bot abre o menu, clica na aba de opções e em
+  **Voltar ao Lobby**. A saída é cancelada se algum preenchimento voltar e nunca
+  acontece com o token encontrado.
 - **CLAIM ALL automático** na tela de recompensa do token.
 - **Tela de suspensão do Fortnite:** detecta “O FORTNITE ESTÁ NO MODO DE
   SUSPENSÃO” e clica em **CONTINUAR JOGANDO**.
@@ -268,6 +269,7 @@ relativas a **1920×1080** e escaladas para o tamanho real da janela.
 | `detection.play_again_score` | `0.65` | Limiar do botão JOGAR NOVAMENTE |
 | `detection.return_lobby_score` | `0.65` | Limiar do botão RETORNAR AO LOBBY |
 | `detection.voltar_lobby_score` | `0.62` | Limiar do botão Voltar ao Lobby no menu |
+| `detection.menu_tab_score` | `0.75` | Limiar da aba de opções do painel social |
 
 > [!TIP]
 > Para testar com poucas partidas, use `max_matches: 2`. Para limitar o tempo,
@@ -300,7 +302,7 @@ forma incremental. Entre os eventos usados:
 | `WBP_PostMatchPanelContainer` | widget do resumo da partida |
 | `OnPlayerPawnDied` | seu personagem morreu |
 | `LogSocialChatManager ... Pl:/PlayerAdded/PlayerRemoved` | preenchimentos entram e saem do esquadrão |
-| `LogSpectateAfterDeathViewTarget ... No teammates available to follow` | você morreu e não há companheiros vivos |
+| `LogSpectateAfterDeathViewTarget ... No teammates available to follow` | o jogo não encontrou alvo para espectar; sozinho não confirma que o esquadrão acabou |
 
 ### Visão computacional
 
@@ -312,8 +314,9 @@ forma incremental. Entre os eventos usados:
 - **`assets/play_again.png`** e **`assets/return_lobby.png`** — botões do resumo
   da partida (**JOGAR NOVAMENTE** e **RETORNAR AO LOBBY**).
 - **`assets/voltar_lobby.png`** — botão **Voltar ao Lobby** do menu de pausa
-  novo; **`assets/exit_icon.png`** mantém o fluxo da interface antiga como
-  fallback.
+  novo; **`assets/menu_tab.png`** — aba de três linhas que abre esse botão no
+  painel social. **`assets/exit_icon.png`** mantém o fluxo da interface antiga
+  como fallback.
 
 Cada acerto é validado por proporção de dourado e presença de branco no centro,
 o que reduz falsos positivos no lobby e no desktop.
@@ -345,7 +348,7 @@ Para validar também a captura ao vivo (Fortnite aberto, sem focar o jogo):
 O teste cobre templates do token, imagens negativas, botões JOGAR/CONTINUAR,
 pós-partida por clique visual, menu **Voltar ao Lobby**, rastreamento dos
 preenchimentos, captura em segundo plano, prevenção de suspensão e o parser do
-log real. São 75 verificações offline; o workflow de CI roda a compilação, o
+log real. São 82 verificações offline; o workflow de CI roda a compilação, o
 verificador de links da documentação e o autoteste no Windows.
 
 Para diagnosticar o resumo da partida ou o menu de pausa sem clicar no jogo:
@@ -394,6 +397,7 @@ fortnite_pirate_farm/
 │   ├── play_again.png
 │   ├── return_lobby.png
 │   ├── voltar_lobby.png
+│   ├── menu_tab.png
 │   ├── exit_icon.png
 │   └── test/                   # imagens de referência do autoteste
 ├── docs/

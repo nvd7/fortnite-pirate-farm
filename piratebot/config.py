@@ -106,6 +106,8 @@ class DetectionConfig:
     play_again_score: float = 0.65
     # Botão Voltar ao Lobby dentro do menu de pausa (UI nova).
     voltar_lobby_score: float = 0.62
+    # Aba de três linhas que abre as opções de saída no painel social.
+    menu_tab_score: float = 0.75
 
 
 @dataclass

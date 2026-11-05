@@ -59,23 +59,25 @@ O bot nunca agenda saída automática depois de encontrar o token.
 ## 3. Último sobrevivente (sem botões no resumo)
 
 Esse é o caso em que o resumo não exibe **JOGAR NOVAMENTE** nem **RETORNAR AO
-LOBBY**. O bot deve abrir o menu com **ESC** e clicar em **Voltar ao Lobby**.
+LOBBY**. O bot deve abrir o painel com **ESC**, clicar na aba de três linhas e
+só então clicar em **Voltar ao Lobby**.
 
 Sinais esperados no log:
 
 ```text
-Não há companheiros vivos na partida. Vou voltar ao lobby.
-...
-Resumo sem os botões de continuar (último sobrevivente). Abrindo o menu com ESC...
+Resumo sem os botões de continuar (último sobrevivente). Abrindo o painel com ESC para chegar em 'Voltar ao Lobby'.
+Botão Aba de opções (menu) detectado ... Clicando...
 Botão Voltar ao Lobby (menu) detectado ... Clicando...
 ```
 
 Checklist:
 
-- [ ] O menu abriu na aba correta.
+- [ ] O painel social abriu com **ESC**.
+- [ ] A aba de três linhas foi clicada antes de **Voltar ao Lobby**.
 - [ ] O clique ocorreu em **Voltar ao Lobby** (parte superior direita).
 - [ ] O bot voltou ao lobby e reenfileirou.
 - [ ] Nenhum ENTER/ESPAÇO foi enviado ao jogo.
+- [ ] O painel não foi fechado por um segundo **ESC**.
 
 Se o menu não for encontrado, o bot tenta novamente a cada
 `postmatch_click_retry` segundos e desiste em `postmatch_timeout`.
@@ -83,16 +85,22 @@ Se o menu não for encontrado, o bot tenta novamente a cada
 ## 4. Saída quando o esquadrão fica vazio
 
 1. Entre em uma partida com fills.
-2. Quando todos saírem (ou morrerem), o log deve mostrar:
+2. Quando o chat confirmar que todos saíram, o log deve mostrar:
 
    ```text
    Todos os preenchimentos saíram da partida (o último preenchimento saiu (...)). Vou sair em 10s se ninguém voltar.
    Abrindo o menu para sair da partida (tentativa 1).
-   Menu já aberto ... Clicando em 'Voltar ao Lobby'.
+   Aba de opções detectada ... Abrindo 'Voltar ao Lobby'...
+   Botão 'Voltar ao Lobby' detectado ... Clicando...
    Saída enviada. Aguardando o retorno ao lobby.
    ```
 
 3. O bot deve voltar ao lobby e entrar em outra partida.
+
+O evento `No teammates available to follow` pode aparecer com fills vivos e
+**não** deve agendar a saída sozinho. Enquanto o chat listar preenchimentos, o
+log pode mostrar a mensagem de que o bot continua AFK. Só depois que o
+rastreador ficar vazio a saída é agendada.
 
 Teste também o cancelamento: se um fill voltar antes do clique, o log deve
 mostrar **Saída automática cancelada** e o bot deve continuar AFK.
@@ -122,5 +130,6 @@ IDs e outras informações pessoais das capturas antes de anexar.
 | `detection.play_again_score` | Limiar do botão JOGAR NOVAMENTE |
 | `detection.return_lobby_score` | Limiar do botão RETORNAR AO LOBBY |
 | `detection.voltar_lobby_score` | Limiar do botão Voltar ao Lobby |
+| `detection.menu_tab_score` | Limiar da aba de opções do painel social |
 
 Depois de editar `config.json`, reinicie o app para carregar os valores.

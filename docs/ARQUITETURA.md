@@ -77,9 +77,11 @@ o botão:
    **RETORNAR AO LOBBY**.
 2. Caso contrário, procura **JOGAR NOVAMENTE** e, em seguida,
    **RETORNAR AO LOBBY**.
-3. Se nenhum botão existir, procura **Voltar ao Lobby** já aberto no menu.
-4. Se o menu ainda não estiver aberto, pressiona **ESC** após
-   `postmatch_menu_after` e tenta novamente.
+3. Se nenhum botão existir, procura **Voltar ao Lobby** ou a aba de opções no
+   painel já aberto.
+4. Se o painel ainda não estiver aberto, pressiona **ESC** após
+   `postmatch_menu_after`; se a aba de opções aparecer, clica nela antes de
+   procurar o botão.
 
 Esse último caminho cobre o caso em que o jogador local é o último
 sobrevivente e o resumo não oferece botões. O bot nunca usa ENTER ou ESPAÇO
@@ -100,11 +102,12 @@ para avançar telas.
 `PlayerAdded:MCP:` entram na lista e `PlayerRemoved:MCP:` saem. O jogador
 local é identificado por `SetHasFinishedLoading` e nunca conta como fill.
 
-Quando o último fill sai — ou o jogador local morre sem companheiros vivos
-(`No teammates available to follow`) — o bot agenda uma saída para
-`squad_leave_delay` segundos depois. Se alguém voltar antes do clique, a saída
-é cancelada. Se o token já foi encontrado, nenhuma saída automática é
-agendada.
+Quando o último fill sai e o chat confirma o esquadrão vazio, o bot agenda uma
+saída para `squad_leave_delay` segundos depois. O evento
+`No teammates available to follow` pode aparecer mesmo com fills vivos, então
+não agenda a saída sozinho: ele só reforça a decisão quando o rastreador já
+está vazio. Se alguém voltar antes do clique, a saída é cancelada. Se o token
+já foi encontrado, nenhuma saída automática é agendada.
 
 ## Captura e visão computacional
 
@@ -120,7 +123,8 @@ O fluxo de captura é:
 O token é procurado em duas formas: disco dourado com "F" (recompensa) e
 quadro dourado do banner (durante a partida). Os botões usam templates
 próprios: `play_button.png`, `suspend_button.png`, `play_again.png`,
-`return_lobby.png`, `voltar_lobby.png` e o fallback `exit_icon.png`.
+`return_lobby.png`, `voltar_lobby.png`, `menu_tab.png` (aba de opções do painel
+social) e o fallback `exit_icon.png`.
 
 ## Threads e comunicação
 

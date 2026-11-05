@@ -328,6 +328,43 @@ def main() -> int:
             )
 
     print()
+    print("Aba de opções do painel social (menu novo):")
+    if detector.menu_tab is None:
+        check(
+            "Template da aba de opções",
+            False,
+            "assets/menu_tab.png não encontrado",
+        )
+    else:
+        import numpy as np
+
+        template = detector.menu_tab
+        canvas = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        x, y = 1660, 55
+        canvas[y : y + template.shape[0], x : x + template.shape[1]] = template
+        hit = detector.find_menu_tab_button(canvas)
+        check(
+            "Aba de opções em tela sintética",
+            hit is not None
+            and abs(hit.center[0] - 1678) <= 2
+            and abs(hit.center[1] - 71) <= 2,
+            f"score={hit.score:.2f} em {hit.center}" if hit else "não encontrada",
+        )
+        for name, image in (
+            ("lobby", lobby),
+            ("suspensão", suspended),
+            ("desktop", desktop),
+        ):
+            if image is None:
+                continue
+            hit = detector.find_menu_tab_button(image)
+            check(
+                f"Sem falso positivo da aba no {name}",
+                hit is None,
+                f"score={hit.score:.2f} em ({hit.x},{hit.y})" if hit else "limpo",
+            )
+
+    print()
     print("Pós-partida: clique visual, sem ENTER/ESPAÇO:")
     summary = None
     if detector.return_lobby is not None and detector.play_again is not None:
@@ -428,6 +465,31 @@ def main() -> int:
             f"cliques={bot_last._controller.clicks}",
         )
 
+        if detector.menu_tab is not None:
+            social_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+            tab = detector.menu_tab
+            social_frame[55 : 55 + tab.shape[0], 1660 : 1660 + tab.shape[1]] = tab
+            bot_last._controller.clicks.clear()
+            bot_last._clicked_postmatch_at = 0.0
+            bot_last._capture = lambda *args, **kwargs: social_frame
+            bot_last._do_postmatch(time.time())
+            bot_last._clicked_postmatch_at = 0.0
+            bot_last._capture = lambda *args, **kwargs: menu_frame
+            bot_last._do_postmatch(time.time())
+            check(
+                "Sem resumo, painel social: aba e depois Voltar ao Lobby",
+                bot_last._controller.clicks == [(1678, 71), (1565, 172)]
+                and bot_last._controller.escapes == 1,
+                f"cliques={bot_last._controller.clicks} "
+                f"esc={bot_last._controller.escapes}",
+            )
+        else:
+            check(
+                "Template da aba para o pós-partida",
+                False,
+                "assets/menu_tab.png não encontrado",
+            )
+
     print()
     print("Diagnóstico do pós-partida (tools/check_postmatch.py):")
     if summary is not None:
@@ -453,6 +515,7 @@ def main() -> int:
             "jogar_novamente",
             "retornar_ao_lobby",
             "voltar_ao_lobby",
+            "aba_menu",
             "seta_saida",
         }
         check(
@@ -522,6 +585,33 @@ def main() -> int:
             f"cliques={bot_leave_closed._controller.clicks} "
             f"esc={bot_leave_closed._controller.escapes}",
         )
+
+        if detector.menu_tab is not None:
+            social = np.zeros((1080, 1920, 3), dtype=np.uint8)
+            tab = detector.menu_tab
+            social[55 : 55 + tab.shape[0], 1660 : 1660 + tab.shape[1]] = tab
+            bot_leave_social = leave_bot()
+            social_frames = [social, menu]
+            bot_leave_social._capture = (
+                lambda *args, **kwargs: social_frames.pop(0)
+                if social_frames
+                else menu
+            )
+            bot_leave_social._attempt_leave_match()
+            check(
+                "Painel social: abre a aba e clica em Voltar ao Lobby",
+                bot_leave_social._controller.clicks == [(1678, 71), (1565, 172)]
+                and bot_leave_social._controller.escapes == 0
+                and bot_leave_social._leave_button_clicked,
+                f"cliques={bot_leave_social._controller.clicks} "
+                f"esc={bot_leave_social._controller.escapes}",
+            )
+        else:
+            check(
+                "Template da aba de opções disponível",
+                False,
+                "assets/menu_tab.png não encontrado",
+            )
     else:
         check(
             "Template Voltar ao Lobby disponível",
@@ -833,7 +923,16 @@ def main() -> int:
     bot.token_found = False
     bot._handle_event(LogEvent("no_teammates", "", "", time.time()))
     check(
-        "Morte sem companheiros vivos agenda a saída",
+        "Evento de espectador não agenda saída com fill vivo",
+        bot._squad_leave_due_at == 0.0,
+        f"restam {len(bot._squad.players)}",
+    )
+
+    bot._handle_event(LogEvent("squad_leave", "conv|004b4...374e1", "", time.time()))
+    bot._squad_leave_due_at = 0.0
+    bot._handle_event(LogEvent("no_teammates", "", "", time.time()))
+    check(
+        "Evento de espectador agenda saída com chat vazio",
         bot._squad_leave_due_at > time.time(),
         f"em {bot._squad_leave_due_at - time.time():.1f}s"
         if bot._squad_leave_due_at

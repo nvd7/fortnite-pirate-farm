@@ -46,6 +46,7 @@ Para elementos do lobby, use **Testar detecção agora** no app ou
   | `assets/play_again.png` | **JOGAR NOVAMENTE** no resumo |
   | `assets/return_lobby.png` | **RETORNAR AO LOBBY** no resumo |
   | `assets/voltar_lobby.png` | **Voltar ao Lobby** no menu de pausa |
+  | `assets/menu_tab.png` | aba de três linhas do painel social |
   | `assets/exit_icon.png` | seta de saída da interface antiga |
   | `assets/coin_inner.png` | disco dourado do token |
   | `assets/coin_banner_frame.png` | quadro dourado do banner |
@@ -83,6 +84,7 @@ Os limiares ficam em `config.json`, no bloco `detection`:
 | `play_again_score` | botão JOGAR NOVAMENTE |
 | `return_lobby_score` | botão RETORNAR AO LOBBY |
 | `voltar_lobby_score` | botão Voltar ao Lobby |
+| `menu_tab_score` | aba de opções do painel social |
 | `exit_icon_score` | seta de saída |
 | `inner_score` / `frame_score` | token |
 

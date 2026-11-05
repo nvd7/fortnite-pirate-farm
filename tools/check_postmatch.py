@@ -51,6 +51,7 @@ def inspect_frame(detector: TokenDetector, frame: Any) -> dict[str, dict[str, An
         ("jogar_novamente", detector.find_play_again_button(frame)),
         ("retornar_ao_lobby", detector.find_return_lobby_button(frame)),
         ("voltar_ao_lobby", detector.find_voltar_lobby_button(frame)),
+        ("aba_menu", detector.find_menu_tab_button(frame)),
         ("seta_saida", detector.find_exit_button(frame)),
     )
     for name, hit in buttons:
@@ -78,6 +79,7 @@ def _print_report(results: dict[str, dict[str, Any]], output: Path) -> None:
         "jogar_novamente": "JOGAR NOVAMENTE",
         "retornar_ao_lobby": "RETORNAR AO LOBBY",
         "voltar_ao_lobby": "Voltar ao Lobby (menu)",
+        "aba_menu": "Aba de opções (três linhas)",
         "seta_saida": "Seta de saída (UI antiga)",
     }
     print()

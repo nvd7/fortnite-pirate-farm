@@ -111,6 +111,7 @@ class PirateBot:
         self._postmatch_clicks = 0
         self._postmatch_menu_at = 0.0
         self._last_postmatch_missing_log = 0.0
+        self._last_no_teammates_log = 0.0
         self._claim_attempted = False
 
         self._squad = SquadTracker()
@@ -330,15 +331,22 @@ class PirateBot:
             return
 
         if event.kind == "no_teammates":
-            # A morte do jogador local sem companheiros vivos indica esquadrão
-            # eliminado. O jogo pode não mostrar JOGAR NOVAMENTE; nesse caso a
-            # saída é ESC -> "Voltar ao Lobby".
-            if self.phase == Phase.MATCH and not self.token_found:
+            # Esse evento aparece quando o espectador não consegue seguir
+            # ninguém, mas o Fortnite também o emite com preenchimentos vivos
+            # (eles não são tratados como alvo de espectativa). Só confie nele
+            # quando o chat já confirmou que todos os fills saíram.
+            if self.phase != Phase.MATCH or self.token_found:
+                return
+            if self._squad.seen_players and self._squad.empty:
+                self._schedule_squad_leave("sem companheiros vivos confirmados")
+            elif time.time() - self._last_no_teammates_log > 30.0:
+                self._last_no_teammates_log = time.time()
                 self._emit_log(
-                    "Não há companheiros vivos na partida. Vou voltar ao lobby.",
-                    "warn",
+                    "O jogo informou que não há companheiros para espectar, mas "
+                    "o chat ainda não confirmou a saída de todos os "
+                    "preenchimentos. Continuo AFK.",
+                    "debug",
                 )
-                self._schedule_squad_leave("sem companheiros vivos")
             return
 
         if event.kind == "match_chat":
@@ -747,6 +755,78 @@ class PirateBot:
         self._emit_log(f"Saída automática cancelada ({reason}).", "info")
         self._emit_status()
 
+    def _try_leave_from_open_menu(self, frame) -> bool:
+        """Tenta sair a partir do painel social já aberto.
+
+        Devolve ``True`` quando executou alguma ação (clique, nova tentativa
+        ou cancelamento) e ``False`` quando nenhum elemento conhecido está
+        visível e o chamador ainda precisa abrir o menu.
+        """
+        if self._detector is None or self._controller is None:
+            return False
+
+        voltar = self._detector.find_voltar_lobby_button(frame)
+        if voltar is not None:
+            self._save_snapshot(frame, "menu_voltar_lobby", log=False)
+            self._emit_log(
+                f"Botão 'Voltar ao Lobby' detectado (confiança {voltar.score:.2f}). "
+                "Clicando...",
+                "info",
+            )
+            if not self._controller.click_client(voltar.center[0], voltar.center[1]):
+                self._retry_leave("não consegui clicar em 'Voltar ao Lobby'")
+                return True
+            self._mark_leave_sent()
+            return True
+
+        menu_tab = self._detector.find_menu_tab_button(frame)
+        if menu_tab is None:
+            return False
+
+        self._leave_menu_open = True
+        self._save_snapshot(frame, "menu_social", log=False)
+        self._emit_log(
+            f"Aba de opções detectada (confiança {menu_tab.score:.2f}). "
+            "Abrindo 'Voltar ao Lobby'...",
+            "info",
+        )
+        if not self._controller.click_client(menu_tab.center[0], menu_tab.center[1]):
+            self._retry_leave("não consegui abrir as opções de saída")
+            return True
+
+        time.sleep(0.9)
+        self._drain_events()
+        if self.phase != Phase.MATCH:
+            return True
+        if not self._squad_leave_due_at:
+            self._abort_leave_attempt("um preenchimento voltou")
+            return True
+        if self.stop_event.is_set():
+            self._close_pause_menu()
+            return True
+
+        next_frame = self._capture("menu de pausa", log_errors=False)
+        if next_frame is None:
+            self._retry_leave("não consegui capturar o menu de opções")
+            return True
+
+        self._save_snapshot(next_frame, "menu_voltar_lobby", log=False)
+        voltar = self._detector.find_voltar_lobby_button(next_frame)
+        if voltar is not None:
+            self._emit_log(
+                f"Botão 'Voltar ao Lobby' detectado (confiança {voltar.score:.2f}). "
+                "Clicando...",
+                "info",
+            )
+            if not self._controller.click_client(voltar.center[0], voltar.center[1]):
+                self._retry_leave("não consegui clicar em 'Voltar ao Lobby'")
+                return True
+            self._mark_leave_sent()
+            return True
+
+        self._retry_leave("não encontrei 'Voltar ao Lobby' no menu de opções")
+        return True
+
     def _attempt_leave_match(self) -> None:
         if (
             self._controller is None
@@ -790,24 +870,8 @@ class PirateBot:
         # Na tela de morte o menu pode já estar aberto; um ESC extra poderia
         # fechá-lo. Confira antes de pressionar a tecla.
         frame = self._capture("menu de pausa", log_errors=False)
-        if frame is not None:
-            voltar = self._detector.find_voltar_lobby_button(frame)
-            if voltar is not None:
-                self._save_snapshot(frame, "menu_voltar_lobby", log=False)
-                self._emit_log(
-                    f"Menu já aberto (confiança {voltar.score:.2f}). "
-                    "Clicando em 'Voltar ao Lobby'.",
-                    "info",
-                )
-                if self._controller.click_client(
-                    voltar.center[0], voltar.center[1]
-                ):
-                    self._mark_leave_sent()
-                else:
-                    self._leave_menu_open = True
-                    self._retry_leave("não consegui clicar em 'Voltar ao Lobby'")
-                    self._close_pause_menu()
-                return
+        if frame is not None and self._try_leave_from_open_menu(frame):
+            return
 
         if not self._controller.press_escape():
             self._retry_leave("não consegui abrir o menu de pausa")
@@ -830,21 +894,9 @@ class PirateBot:
             self._close_pause_menu()
             return
 
-        # Interface nova: o menu de pausa não tem mais a seta de saída; o
-        # primeiro botão da aba já é "Voltar ao Lobby".
-        voltar = self._detector.find_voltar_lobby_button(frame)
-        if voltar is not None:
-            self._save_snapshot(frame, "menu_voltar_lobby", log=False)
-            self._emit_log(
-                f"Menu de pausa detectado (confiança {voltar.score:.2f}). "
-                "Clicando em 'Voltar ao Lobby'.",
-                "info",
-            )
-            if not self._controller.click_client(voltar.center[0], voltar.center[1]):
-                self._retry_leave("não consegui clicar em 'Voltar ao Lobby'")
-                self._close_pause_menu()
-                return
-            self._mark_leave_sent()
+        # Interface nova: ESC abre o painel social; a aba de três linhas
+        # revela "Voltar ao Lobby".
+        if self._try_leave_from_open_menu(frame):
             return
 
         # Interface antiga: seta de saída no canto superior direito.
@@ -1095,26 +1147,33 @@ class PirateBot:
         if target is None:
             # Quando o jogador local é o último sobrevivente, o jogo pode
             # encerrar a partida sem exibir JOGAR NOVAMENTE/RETORNAR AO LOBBY.
-            # Nesse caso a saída é ESC -> "Voltar ao Lobby" no menu de pausa.
+            # Nesse caso a saída é ESC -> aba de opções -> "Voltar ao Lobby".
             voltar = self._detector.find_voltar_lobby_button(frame)
             if voltar is not None:
                 target = ("Voltar ao Lobby (menu)", voltar)
-            elif (
-                elapsed >= self.config.behavior.postmatch_menu_after
-                and now - self._postmatch_menu_at >= max(8.0, retry * 2.0)
-            ):
-                self._postmatch_menu_at = now
-                self._emit_log(
-                    "Resumo sem os botões de continuar (último sobrevivente). "
-                    "Abrindo o menu com ESC para clicar em 'Voltar ao Lobby'.",
-                    "warn",
-                )
-                self._save_snapshot(frame, "pos_partida_menu", log=False)
-                if self._controller is not None and not self._controller.press_escape():
+            else:
+                menu_tab = self._detector.find_menu_tab_button(frame)
+                if menu_tab is not None:
+                    target = ("Aba de opções (menu)", menu_tab)
+                elif (
+                    elapsed >= self.config.behavior.postmatch_menu_after
+                    and now - self._postmatch_menu_at >= max(8.0, retry * 2.0)
+                ):
+                    self._postmatch_menu_at = now
                     self._emit_log(
-                        "Não consegui abrir o menu de pausa; vou tentar de novo.",
+                        "Resumo sem os botões de continuar (último sobrevivente). "
+                        "Abrindo o painel com ESC para chegar em 'Voltar ao Lobby'.",
                         "warn",
                     )
+                    self._save_snapshot(frame, "pos_partida_menu", log=False)
+                    if (
+                        self._controller is not None
+                        and not self._controller.press_escape()
+                    ):
+                        self._emit_log(
+                            "Não consegui abrir o menu de pausa; vou tentar de novo.",
+                            "warn",
+                        )
 
         if target is None:
             if now - self._last_postmatch_missing_log > 10.0:
