@@ -85,7 +85,7 @@ class DetectionConfig:
     inner_scales: tuple[int, ...] = (60, 75, 95, 120, 150, 190, 240, 300, 380, 480, 600)
     frame_scales: tuple[int, ...] = (100, 125, 155, 195, 245, 305, 380)
     inner_score: float = 0.62
-    inner_score_small: float = 0.55
+    inner_score_small: float = 0.62
     inner_small_width: int = 100
     frame_score: float = 0.70
     gold_min: float = 0.65

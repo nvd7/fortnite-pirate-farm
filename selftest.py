@@ -27,6 +27,7 @@ NEGATIVE_IMAGES = [
     "game_after_resume.png",
     "game_focused.png",
     "fortnite_now.png",
+    "postmatch_elemental_icon.png",
 ]
 
 results: list[tuple[bool, str]] = []

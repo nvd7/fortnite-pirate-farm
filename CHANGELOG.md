@@ -11,6 +11,9 @@ e o projeto usa versionamento semântico.
 - Falso positivo do token causado por personagens e efeitos dourados com muito
   branco no centro. A validação agora limita a proporção máxima de branco do
   disco dourado, além dos limites mínimos já existentes.
+- Falso positivo no ícone dourado de "Equipar um Elemental" na tela de resumo
+  da partida. O limiar dos templates pequenos subiu de 0,55 para 0,62, faixa
+  que ainda aprova todas as capturas reais do token nos testes.
 - `config.json` volta a salvar o caminho do log de forma portátil
   (`%LOCALAPPDATA%`), sem gravar o caminho absoluto do usuário.
 
