@@ -18,6 +18,7 @@ from piratebot.config import ASSETS, LOGS, load_config
 from piratebot.logwatcher import LogEvent, LogWatcher, parse_line, player_key
 from piratebot.squad import SquadTracker
 from piratebot.vision import TokenDetector, imread_u, imwrite_u
+from tools.check_postmatch import inspect_frame
 
 TEST_ASSETS = ASSETS / "test"
 
@@ -423,6 +424,52 @@ def main() -> int:
             and bot_last._controller.enter == 0
             and bot_last._controller.space == 0,
             f"cliques={bot_last._controller.clicks}",
+        )
+
+    print()
+    print("Diagnóstico do pós-partida (tools/check_postmatch.py):")
+    if summary is not None:
+        import numpy as np
+
+        report = inspect_frame(detector, summary)
+        play_again = report["jogar_novamente"]
+        return_lobby = report["retornar_ao_lobby"]
+        check(
+            "Diagnóstico encontra JOGAR NOVAMENTE",
+            play_again["found"] is True and play_again["center"] == (1576, 530),
+            f"centro={play_again['center']} score={play_again['score']:.2f}",
+        )
+        check(
+            "Diagnóstico encontra RETORNAR AO LOBBY",
+            return_lobby["found"] is True and return_lobby["center"] == (1576, 442),
+            f"centro={return_lobby['center']} score={return_lobby['score']:.2f}",
+        )
+        expected_keys = {
+            "token",
+            "jogar",
+            "continuar_jogando",
+            "jogar_novamente",
+            "retornar_ao_lobby",
+            "voltar_ao_lobby",
+            "seta_saida",
+        }
+        check(
+            "Diagnóstico usa as mesmas chaves do relatório",
+            set(report) == expected_keys,
+            f"chaves={sorted(report)}",
+        )
+        blank = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        empty_report = inspect_frame(detector, blank)
+        check(
+            "Diagnóstico não inventa botões em tela vazia",
+            not any(item["found"] for item in empty_report.values()),
+            f"encontrados={[name for name, item in empty_report.items() if item['found']]}",
+        )
+    else:
+        check(
+            "Diagnóstico do pós-partida disponível",
+            False,
+            "templates do resumo necessários",
         )
 
     print()
