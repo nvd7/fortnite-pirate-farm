@@ -422,6 +422,7 @@ class PirateFarmApp:
         # realmente mapeada e ativada pelo Windows; reaplicamos ao mapear e
         # sempre que a janela ganha foco (o DWM descarta a cor no primeiro
         # desenho se ela for definida cedo demais).
+        self.root.after(120, self._focus_window)
         self.root.bind(
             "<Map>",
             lambda _event: self.root.after(
@@ -511,6 +512,14 @@ class PirateFarmApp:
             )
         self.mode_hint_card.config(bg=card_bg, highlightbackground=border)
         self.mode_hint.config(text=text, bg=card_bg, fg=foreground)
+
+    def _focus_window(self) -> None:
+        """Traz o app para a frente ao abrir e ativa a barra de título escura."""
+        try:
+            self.root.lift()
+            self.root.focus_force()
+        except Exception:
+            pass
 
     def _apply_dark_titlebar(self, window: tk.Misc) -> None:
         try:
