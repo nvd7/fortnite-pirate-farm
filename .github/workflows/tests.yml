@@ -32,7 +32,10 @@ jobs:
           pip install -r requirements.txt
 
       - name: Compilar
-        run: python -m compileall -q main.py selftest.py piratebot
+        run: python -m compileall -q main.py selftest.py piratebot tools
+
+      - name: Verificar links da documentação
+        run: python tools/check_docs.py
 
       - name: Autoteste offline
         shell: pwsh
