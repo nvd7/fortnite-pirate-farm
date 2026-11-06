@@ -366,6 +366,8 @@ def main() -> int:
 
     print()
     print("Pós-partida: clique visual, sem ENTER/ESPAÇO:")
+    import numpy as np
+
     summary = None
     if detector.return_lobby is not None and detector.play_again is not None:
         summary = np.zeros((1080, 1920, 3), dtype=np.uint8)
@@ -400,6 +402,39 @@ def main() -> int:
             and bot_postmatch._controller.enter == 0
             and bot_postmatch._controller.space == 0,
             f"cliques={bot_postmatch._controller.clicks}",
+        )
+
+        # Regressão v1.1.4: depois de JOGAR NOVAMENTE a tela é a da fila,
+        # sem os botões do resumo. O bot deve aguardar a partida em vez de
+        # abrir o menu com ESC e voltar ao lobby.
+        bot_requeue = postmatch_bot(False)
+        bot_requeue._endgame_at = time.time() - 20.0
+        bot_requeue._do_postmatch(time.time())
+        queue_frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+        bot_requeue._capture = lambda *args, **kwargs: queue_frame
+        bot_requeue._clicked_postmatch_at = 0.0
+        bot_requeue._do_postmatch(time.time())
+        check(
+            "Após JOGAR NOVAMENTE, espera a partida sem abrir ESC",
+            bot_requeue._controller.clicks == [(1576, 530)]
+            and bot_requeue._controller.escapes == 0
+            and bot_requeue._requeued_at > 0.0,
+            f"cliques={bot_requeue._controller.clicks} "
+            f"esc={bot_requeue._controller.escapes}",
+        )
+
+        # Se a fila estourar o tempo de matchmaking, o fallback de saída
+        # precisa voltar a funcionar para não deixar o bot preso.
+        expired_at = time.time() + config.behavior.matchmaking_timeout + 5.0
+        bot_requeue._requeued_at = time.time() - 1.0
+        bot_requeue._do_postmatch(expired_at)
+        bot_requeue._do_postmatch(expired_at + 20.0)
+        check(
+            "Matchmaking esgotado após JOGAR NOVAMENTE libera o ESC",
+            bot_requeue._requeued_at == 0.0
+            and bot_requeue._controller.escapes == 1,
+            f"requeued={bot_requeue._requeued_at:.0f} "
+            f"esc={bot_requeue._controller.escapes}",
         )
 
         bot_token = postmatch_bot(True)

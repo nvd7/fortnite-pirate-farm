@@ -76,7 +76,9 @@ o botão:
 1. Se o token foi encontrado ou o limite de partidas foi atingido, procura
    **RETORNAR AO LOBBY**.
 2. Caso contrário, procura **JOGAR NOVAMENTE** e, em seguida,
-   **RETORNAR AO LOBBY**.
+   **RETORNAR AO LOBBY**. Depois do clique em **JOGAR NOVAMENTE**, o bot fica
+   na tela de fila e só volta ao fluxo de saída se `matchmaking_timeout`
+   estourar; nesse intervalo ele não pressiona **ESC**.
 3. Se nenhum botão existir, procura **Voltar ao Lobby** ou a aba de opções no
    painel já aberto.
 4. Se o painel ainda não estiver aberto, pressiona **ESC** após

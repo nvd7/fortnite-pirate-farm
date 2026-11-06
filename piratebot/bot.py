@@ -110,6 +110,9 @@ class PirateBot:
         self._clicked_postmatch_at = 0.0
         self._postmatch_clicks = 0
         self._postmatch_menu_at = 0.0
+        # Momento do clique em JOGAR NOVAMENTE. Enquanto a fila estiver
+        # ativa, o bot não abre o menu com ESC para "Voltar ao Lobby".
+        self._requeued_at = 0.0
         self._last_postmatch_missing_log = 0.0
         self._last_no_teammates_log = 0.0
         self._claim_attempted = False
@@ -240,7 +243,11 @@ class PirateBot:
             if self.config.behavior.max_runtime_minutes > 0:
                 limit = self.config.behavior.max_runtime_minutes * 60
                 if now - self.started_at > limit:
-                    self._stop_with_message("Limite de tempo de execução atingido.")
+                    self._stop_with_message(
+                        "Limite de tempo de execução atingido. "
+                        "Ajuste max_runtime_minutes no config.json "
+                        "(0 = sem limite) e inicie novamente."
+                    )
                     break
 
             if self.phase == Phase.STARTING:
@@ -412,6 +419,7 @@ class PirateBot:
         self._reset_squad_tracking()
         self.phase = Phase.LOBBY
         self._counted_match = False
+        self._requeued_at = 0.0
         self._lobby_ready_at = time.time() + self.config.behavior.ready_delay
         self.message = "No lobby. Vou clicar em JOGAR..."
         suffix = f" ({reason})" if reason else ""
@@ -443,6 +451,7 @@ class PirateBot:
         self._clicked_postmatch_at = 0.0
         self._postmatch_clicks = 0
         self._postmatch_menu_at = 0.0
+        self._requeued_at = 0.0
         self._last_postmatch_missing_log = 0.0
         self._claim_attempted = False
         self._last_match_report = time.time()
@@ -462,6 +471,7 @@ class PirateBot:
         self._clicked_postmatch_at = 0.0
         self._postmatch_clicks = 0
         self._postmatch_menu_at = 0.0
+        self._requeued_at = 0.0
         self._last_postmatch_missing_log = 0.0
         if self.token_found or self.manual_token_event.is_set():
             if self.token_found and not self.manual_token_event.is_set():
@@ -497,6 +507,7 @@ class PirateBot:
         self._clicked_postmatch_at = 0.0
         self._postmatch_clicks = 0
         self._postmatch_menu_at = 0.0
+        self._requeued_at = 0.0
         self._last_postmatch_missing_log = 0.0
         self._postmatch_snapshots = 0
         self._last_postmatch_snapshot_at = 0.0
@@ -1058,6 +1069,22 @@ class PirateBot:
                 self._controller.focus_if_needed()
 
     def _do_postmatch(self, now: float) -> None:
+        # Depois de clicar em JOGAR NOVAMENTE, a tela passa a ser a da fila.
+        # Ela não tem os botões do resumo; abrir o menu com ESC aqui
+        # cancelaria a fila e devolveria o jogador ao lobby. Só retome o
+        # fluxo de saída se o matchmaking estourar o tempo limite.
+        if (
+            self._requeued_at
+            and now - self._requeued_at >= self.config.behavior.matchmaking_timeout
+        ):
+            self._requeued_at = 0.0
+            self._endgame_at = now
+            self._postmatch_menu_at = 0.0
+            self._emit_log(
+                "Tempo de matchmaking esgotado após JOGAR NOVAMENTE. "
+                "Voltando ao fluxo de saída pelo menu.",
+                "warn",
+            )
         elapsed = now - self._endgame_at
         frame = None
 
@@ -1156,7 +1183,8 @@ class PirateBot:
                 if menu_tab is not None:
                     target = ("Aba de opções (menu)", menu_tab)
                 elif (
-                    elapsed >= self.config.behavior.postmatch_menu_after
+                    not self._requeued_at
+                    and elapsed >= self.config.behavior.postmatch_menu_after
                     and now - self._postmatch_menu_at >= max(8.0, retry * 2.0)
                 ):
                     self._postmatch_menu_at = now
@@ -1178,10 +1206,16 @@ class PirateBot:
         if target is None:
             if now - self._last_postmatch_missing_log > 10.0:
                 self._last_postmatch_missing_log = now
-                self._emit_log(
-                    "Ainda não encontrei os botões do resumo; continuo observando.",
-                    "warn",
-                )
+                if self._requeued_at:
+                    self._emit_log(
+                        "JOGAR NOVAMENTE clicado; aguardando a partida iniciar.",
+                        "debug",
+                    )
+                else:
+                    self._emit_log(
+                        "Ainda não encontrei os botões do resumo; continuo observando.",
+                        "warn",
+                    )
         else:
             label, hit = target
             self._clicked_postmatch_at = now
@@ -1191,13 +1225,25 @@ class PirateBot:
                 "info",
             )
             if self._controller is not None:
-                if not self._controller.click_client(hit.center[0], hit.center[1]):
+                clicked = self._controller.click_client(hit.center[0], hit.center[1])
+                if not clicked:
                     self._emit_log(
                         "O clique no resumo não foi confirmado; vou tentar novamente.",
                         "warn",
                     )
+                elif label == "JOGAR NOVAMENTE":
+                    # Marca que a fila foi iniciada. Enquanto essa marca
+                    # existir, o fallback com ESC fica bloqueado.
+                    self._requeued_at = now
+                    self.message = "Aguardando a partida iniciar..."
+                    self._emit_log(
+                        "JOGAR NOVAMENTE clicado; aguardando a partida "
+                        "iniciar sem abrir o menu.",
+                        "info",
+                    )
+                    self._emit_status()
 
-        if elapsed > self.config.behavior.postmatch_timeout:
+        if not self._requeued_at and elapsed > self.config.behavior.postmatch_timeout:
             self._fail(
                 "Não consegui voltar ao lobby após a partida. "
                 "Verifique a tela do jogo e inicie o bot novamente."

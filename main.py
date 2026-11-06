@@ -33,24 +33,24 @@ from piratebot.vision import (
 )
 
 APP_TITLE = "Pirate Farm — Fortnite"
-APP_VERSION = "1.1.3"
+APP_VERSION = "1.1.4"
 
 # Paleta do modo escuro.
-BG = "#0b1220"
-BG_SOFT = "#0f1a2c"
-CARD = "#111d31"
-CARD_BORDER = "#22314b"
-SUBTLE = "#1a2940"
-SUBTLE_HOVER = "#243653"
-TEXT = "#e6eef9"
-MUTED = "#93a4bd"
-DIM = "#64748b"
-GOLD = "#f5c451"
+BG = "#0a0f18"
+BG_SOFT = "#0e1624"
+CARD = "#101a2a"
+CARD_BORDER = "#1e2b40"
+SUBTLE = "#162235"
+SUBTLE_HOVER = "#1f3049"
+TEXT = "#e8eef8"
+MUTED = "#94a7c0"
+DIM = "#5f728c"
+GOLD = "#f4c95d"
 GREEN = "#34d399"
 GREEN_DARK = "#0f766e"
 GREEN_DEEP = "#123c33"
 RED = "#f87171"
-RED_DARK = "#991b1b"
+RED_DARK = "#8f1d1d"
 AMBER = "#fbbf24"
 BLUE = "#60a5fa"
 
@@ -880,7 +880,6 @@ class PirateFarmApp:
         elif kind == "error":
             text = message.get("text", "Erro desconhecido.")
             self._set_status(Phase.ERROR.value, text)
-            self._log(text, "error")
             self.root.bell()
             try:
                 self._dialog("Erro no Pirate Farm", text)
@@ -890,7 +889,6 @@ class PirateFarmApp:
         elif kind == "stopped":
             text = message.get("text", "Parado.")
             self._set_status(Phase.STOPPED.value, text)
-            self._log(text, "warn")
 
         elif kind == "hotkey":
             if self.bot is not None and self.bot.is_running():

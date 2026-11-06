@@ -18,7 +18,7 @@ confiança dos templates do token, do resumo e do menu.
 - [ ] A janela está em **1920×1080** ou em uma resolução compatível.
 - [ ] A opção **Segundo plano** está marcada.
 - [ ] `dry_run` está `false` no `config.json`.
-- [ ] O app mostra **v1.1.2** no cabeçalho.
+- [ ] O app mostra **v1.1.4** no cabeçalho.
 
 ## 1. Pós-partida com JOGAR NOVAMENTE
 
@@ -28,9 +28,12 @@ confiança dos templates do token, do resumo e do menu.
    ```text
    Fim da partida detectado ...
    Botão JOGAR NOVAMENTE detectado (confiança ...). Clicando...
+   JOGAR NOVAMENTE clicado; aguardando a partida iniciar sem abrir o menu.
+   Partida iniciada (2) (evento do log). AFK ativado; procurando o token.
    ```
 
-3. O bot deve voltar ao lobby e iniciar a partida seguinte.
+3. O bot deve permanecer na tela de matchmaking até a partida começar. Ele
+   **não** deve abrir o menu com **ESC** durante a fila.
 4. Confira se o contador **Partidas** aumentou apenas uma vez.
 
 Se o bot não encontrar o botão:
@@ -124,6 +127,7 @@ IDs e outras informações pessoais das capturas antes de anexar.
 | `behavior.postmatch_click_after` | Espera antes de clicar no resumo |
 | `behavior.postmatch_click_retry` | Intervalo entre tentativas de clique |
 | `behavior.postmatch_menu_after` | Espera para abrir o menu quando não há botões |
+| `behavior.matchmaking_timeout` | Limite da fila após JOGAR NOVAMENTE antes de liberar o ESC |
 | `behavior.postmatch_timeout` | Limite para concluir o pós-partida |
 | `behavior.squad_leave_delay` | Espera antes de sair com o esquadrão vazio |
 | `behavior.squad_leave_retry` | Intervalo entre tentativas de saída |

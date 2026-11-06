@@ -13,7 +13,7 @@
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="#requisitos"><img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white" alt="Windows 10/11"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licen%C3%A7a-MIT-34d399" alt="Licença MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.1.3-f5c451" alt="Versão 1.1.3"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.1.4-f5c451" alt="Versão 1.1.4"></a>
   <a href="https://github.com/nvd7/fortnite-pirate-farm/actions/workflows/tests.yml"><img src="https://github.com/nvd7/fortnite-pirate-farm/actions/workflows/tests.yml/badge.svg" alt="Testes"></a>
   <img src="https://img.shields.io/badge/idioma-PT--BR-0b1220" alt="Português do Brasil">
 </p>
@@ -38,10 +38,11 @@
 > local, captura a tela e envia cliques/teclas como um usuário.
 
 > [!IMPORTANT]
-> **Status:** v1.1.3 - pós-partida por clique visual, saída automática quando o
-> esquadrão fica vazio e retorno pelo menu **Voltar ao Lobby**. O primeiro farm
-> com partidas reais deve ser supervisionado, porque telas de recompensa e
-> mudanças de layout do Fortnite podem exigir calibração.
+> **Status:** v1.1.4 - pós-partida por clique visual, espera pela fila após
+> **JOGAR NOVAMENTE**, saída automática quando o esquadrão fica vazio e retorno
+> pelo menu **Voltar ao Lobby**. O primeiro farm com partidas reais deve ser
+> supervisionado, porque telas de recompensa e mudanças de layout do Fortnite
+> podem exigir calibração.
 
 ---
 
@@ -59,9 +60,9 @@ O ciclo é automático:
 3. Acompanha os preenchimentos pelo canal de chat do jogo. Quando o último fill
    sai, abre o menu com **ESC**, clica na aba de opções e em **Voltar ao Lobby**
    para procurar outro esquadrão.
-4. Ao terminar a partida, clica em **JOGAR NOVAMENTE** na tela de resumo. Se não
-   houver esse botão, abre o menu com **ESC**, clica na aba de opções e usa
-   **Voltar ao Lobby**.
+4. Ao terminar a partida, clica em **JOGAR NOVAMENTE** na tela de resumo e
+   aguarda a fila iniciar a próxima partida. Se não houver esse botão, abre o
+   menu com **ESC**, clica na aba de opções e usa **Voltar ao Lobby**.
 5. Quando o token aparece, espera a partida acabar, retorna ao lobby, confirma a
    recompensa com **CLAIM ALL** (se a tela aparecer) e encerra.
 
@@ -82,8 +83,9 @@ o botão **CLAIM ALL**. Nada é enviado para a internet.
   testada contra lobby, desktop, tela de suspensão e imagens de referência.
 - **Ciclo por log + visão:** lobby, matchmaking, partida, pós-partida e retorno ao
   lobby sem depender de temporizações fixas.
-- **Pós-partida por clique visual:** clica em **JOGAR NOVAMENTE** ou
-  **RETORNAR AO LOBBY**; não usa ENTER/ESPAÇO, então o chat do jogo não abre.
+- **Pós-partida por clique visual:** clica em **JOGAR NOVAMENTE** e aguarda a
+  fila, ou em **RETORNAR AO LOBBY**; não usa ENTER/ESPAÇO, então o chat do jogo
+  não abre.
 - **Saída automática do esquadrão:** quando o chat confirma que todos os
   preenchimentos saíram, o bot abre o menu, clica na aba de opções e em
   **Voltar ao Lobby**. A saída é cancelada se algum preenchimento voltar e nunca
@@ -348,7 +350,7 @@ Para validar também a captura ao vivo (Fortnite aberto, sem focar o jogo):
 O teste cobre templates do token, imagens negativas, botões JOGAR/CONTINUAR,
 pós-partida por clique visual, menu **Voltar ao Lobby**, rastreamento dos
 preenchimentos, captura em segundo plano, prevenção de suspensão e o parser do
-log real. São 82 verificações offline; o workflow de CI roda a compilação, o
+log real. São 84 verificações offline; o workflow de CI roda a compilação, o
 verificador de links da documentação e o autoteste no Windows.
 
 Para diagnosticar o resumo da partida ou o menu de pausa sem clicar no jogo:
@@ -429,6 +431,7 @@ fortnite_pirate_farm/
 | **O jogo entra em suspensão** | O bot tenta **CONTINUAR JOGANDO**, mas o ideal é desativar a suspensão nas configurações do Fortnite e manter a janela sem borda. |
 | **O PC dorme ou a tela bloqueia** | Ative **Manter PC acordado** e desative a suspensão/bloqueio automático no Windows. `Win+L` manual não é impedido. |
 | **A tela de pós-partida não avança** | Confira as capturas `logs\snapshots\pos_partida_*.png`. Ajuste `postmatch_click_after`/`postmatch_click_retry` e, se o resumo não tiver botões, `postmatch_menu_after`. |
+| **O bot para sozinho após alguns minutos** | Confira `behavior.max_runtime_minutes` no `config.json`; `0` significa sem limite. O valor antigo de 30 minutos parava o farm. |
 | **Não sei qual botão o resumo exibe** | Rode `tools\check_postmatch.py` e veja a confiança de cada template. O diagnóstico não clica no jogo. |
 | **Falso positivo de token** | Guarde a captura de `logs\snapshots\` e abra uma issue; não aumente o limiar sem testar as imagens negativas. |
 | **Python não encontrado no `run.bat`** | Reinstale o Python marcando **Add python.exe to PATH** e abra um terminal novo. |

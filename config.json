@@ -86,7 +86,7 @@
     "squad_leave_retry": 20.0,
     "squad_leave_max_attempts": 3,
     "max_matches": 0,
-    "max_runtime_minutes": 30,
+    "max_runtime_minutes": 0,
     "auto_close_success_seconds": 30,
     "dry_run": false,
     "background_mode": true

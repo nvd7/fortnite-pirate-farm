@@ -4,6 +4,27 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto usa versionamento semântico.
 
+## [1.1.4] - 2026-11-06
+
+### Corrigido
+
+- Depois de clicar em **JOGAR NOVAMENTE**, o bot espera a tela de matchmaking e
+  o início da partida seguinte. Antes, o fallback com **ESC** disparava poucos
+  segundos depois do clique e devolvia o jogador ao lobby no meio da fila.
+- O fallback com **ESC** só volta a valer se `matchmaking_timeout` estourar sem
+  a partida começar.
+- A mensagem de parada e a de erro não aparecem mais duplicadas no painel de
+  log: o evento da interface não repete o texto já registrado pelo bot.
+- O `config.json` de exemplo não limita mais a execução a 30 minutos; o padrão
+  passou a ser `0` (sem limite), como já estava documentado.
+- A mensagem de limite de tempo agora indica como ajustar
+  `max_runtime_minutes`.
+
+### Alterado
+
+- Autoteste ampliado para 84 verificações, cobrindo a espera pela partida após
+  **JOGAR NOVAMENTE** e a liberação do fallback quando o matchmaking expira.
+
 ## [1.1.3] - 2026-11-05
 
 ### Adicionado
