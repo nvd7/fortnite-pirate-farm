@@ -50,6 +50,15 @@ from piratebot.webhook import (
 from tools.check_docs import check_file
 from tools.check_postmatch import inspect_frame
 
+def _configure_console() -> None:
+    """Evita UnicodeEncodeError no console cp1252 do Windows/GitHub Actions."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
+
+
 TEST_ASSETS = ASSETS / "test"
 
 POSITIVE_IMAGES = [
@@ -112,6 +121,7 @@ class RecordingController:
 
 
 def main() -> int:
+    _configure_console()
     print("Pirate Farm — autoteste")
     print(f"Python: {sys.version.split()[0]}")
     print(f"Projeto: {Path(__file__).resolve().parent}")
