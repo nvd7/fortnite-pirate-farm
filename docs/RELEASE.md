@@ -12,6 +12,7 @@ recursos novos e `PATCH` para correções.
 - [ ] O badge de versão em `README.md` foi atualizado.
 - [ ] O `CHANGELOG.md` tem uma seção `[x.y.z] - AAAA-MM-DD` com as mudanças.
 - [ ] `config.json` continua com valores portáveis e sem caminhos absolutos.
+- [ ] `config.json` não contém URL real de webhook nem outra credencial.
 - [ ] Nenhum log, captura ou dado pessoal entrou no commit.
 
 ## 2. Validar localmente
@@ -26,6 +27,8 @@ recursos novos e `PATCH` para correções.
 - [ ] O autoteste terminou com **todos os N testes passaram**.
 - [ ] Se houver Fortnite aberto, rode também `selftest.py --live`.
 - [ ] Abra o app e confirme a versão no cabeçalho.
+- [ ] Rode `Instalar.bat -NoShortcut` e confirme que as dependências carregam.
+- [ ] Rode `Instalar.bat` e confira o atalho da área de trabalho e o ícone.
 - [ ] Faça uma validação supervisionada seguindo
   [VALIDACAO.md](VALIDACAO.md), quando a mudança afetar o jogo.
 

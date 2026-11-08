@@ -18,7 +18,9 @@ confiança dos templates do token, do resumo e do menu.
 - [ ] A janela está em **1920×1080** ou em uma resolução compatível.
 - [ ] A opção **Segundo plano** está marcada.
 - [ ] `dry_run` está `false` no `config.json`.
-- [ ] O app mostra **v1.1.4** no cabeçalho.
+- [ ] O app mostra **v1.2.0** no cabeçalho.
+- [ ] O campo **Limite (min)** está em `180` ou menos (evita sessões longas de AFK).
+- [ ] A aba **Webhook** está configurada, se o envio for testado.
 
 ## 1. Pós-partida com JOGAR NOVAMENTE
 
@@ -59,7 +61,53 @@ Se o bot não encontrar o botão:
 
 O bot nunca agenda saída automática depois de encontrar o token.
 
-## 3. Último sobrevivente (sem botões no resumo)
+## 3. Recompensas, OCR e webhook
+
+1. Abra a aba **Webhook**, cole a URL, marque **Webhook ativado** e clique em
+   **Testar webhook**. O registro deve confirmar o envio.
+2. Clique em **Salvar configuração** e inicie uma partida.
+3. Abra um baú ou receba uma recompensa e confira no registro:
+
+   ```text
+   Recompensa detectada: Dispositivo Elemental (via OCR, confiança 0.85).
+   Texto lido: VOCÊ ENCONTROU DISPOSITIVO ELEMENTAL
+   Captura adicionada à fila do webhook.
+   ```
+
+4. No Discord (ou no endpoint), a mensagem deve chegar com o nome e a captura
+   do banner centralizado.
+5. Repita com a interface em outro idioma, se possível. Sem OCR legível, a
+   mensagem deve usar **“Recompensa encontrada”**, mas a captura deve continuar
+   sendo enviada.
+6. Use **Testar OCR na tela** com o banner aberto e confira os valores de
+   `banner` e `brasão` no registro.
+
+Checklist:
+
+- [ ] O banner genérico foi enviado com o nome lido.
+- [ ] O banner do token foi normalizado para **Acesso à Loja Pirata**.
+- [ ] Telas de carregamento, espectador e HUD **não** geraram recompensa.
+- [ ] Um clarão dourado de baú acelerou a leitura sem marcar token sozinho.
+- [ ] O webhook recebeu a captura PNG e o nome.
+- [ ] A URL aparece mascarada no registro.
+
+## 4. Limpeza de capturas
+
+1. Na aba **Farm**, confira a quantidade e o tamanho em **Capturas
+   automáticas**.
+2. Clique em **Limpar agora** e veja o resultado no registro.
+3. Confirme que arquivos `token_*` e `tela_recompensa_*` continuam na pasta.
+4. Ajuste os campos de retenção e clique em **Salvar** (ou reinicie) para
+   aplicar.
+
+Checklist:
+
+- [ ] A pasta ficou dentro de `snapshot_max_files`.
+- [ ] As capturas mais recentes foram preservadas.
+- [ ] As evidências do token continuam intactas.
+- [ ] Um upload de webhook em andamento não foi interrompido pela limpeza.
+
+## 5. Último sobrevivente (sem botões no resumo)
 
 Esse é o caso em que o resumo não exibe **JOGAR NOVAMENTE** nem **RETORNAR AO
 LOBBY**. O bot deve abrir o painel com **ESC**, clicar na aba de três linhas e
@@ -85,7 +133,7 @@ Checklist:
 Se o menu não for encontrado, o bot tenta novamente a cada
 `postmatch_click_retry` segundos e desiste em `postmatch_timeout`.
 
-## 4. Saída quando o esquadrão fica vazio
+## 6. Saída quando o esquadrão fica vazio
 
 1. Entre em uma partida com fills.
 2. Quando o chat confirmar que todos saíram, o log deve mostrar:
@@ -108,7 +156,7 @@ rastreador ficar vazio a saída é agendada.
 Teste também o cancelamento: se um fill voltar antes do clique, o log deve
 mostrar **Saída automática cancelada** e o bot deve continuar AFK.
 
-## 5. Falhas e diagnóstico
+## 7. Falhas e diagnóstico
 
 Se algo não funcionar, guarde:
 
@@ -131,9 +179,20 @@ IDs e outras informações pessoais das capturas antes de anexar.
 | `behavior.postmatch_timeout` | Limite para concluir o pós-partida |
 | `behavior.squad_leave_delay` | Espera antes de sair com o esquadrão vazio |
 | `behavior.squad_leave_retry` | Intervalo entre tentativas de saída |
+| `behavior.max_runtime_minutes` | Limite da sessão em minutos; `0` desativa (maior risco de ban) |
 | `detection.play_again_score` | Limiar do botão JOGAR NOVAMENTE |
 | `detection.return_lobby_score` | Limiar do botão RETORNAR AO LOBBY |
 | `detection.voltar_lobby_score` | Limiar do botão Voltar ao Lobby |
 | `detection.menu_tab_score` | Limiar da aba de opções do painel social |
+| `rewards.fallback_banner_score` | Confiança do brasão para o fallback sem OCR |
+| `rewards.chest_precue_enabled` | Acelera a leitura após um clarão dourado central |
+| `rewards.chest_precue_watch_seconds` | Duração da leitura acelerada |
+| `rewards.scan_interval` | Intervalo entre leituras de recompensa |
+| `storage.snapshot_max_files` | Máximo de capturas mantidas |
+| `storage.snapshot_max_age_days` | Idade máxima das capturas |
+| `storage.snapshot_min_keep` | Capturas recentes sempre mantidas |
+| `webhook.enabled` / `webhook.url` | Ativação e destino do envio |
 
-Depois de editar `config.json`, reinicie o app para carregar os valores.
+Depois de editar `config.json`, reinicie o app para carregar os valores de
+detecção, retenção e comportamento. A URL do webhook pode ser alterada pela
+própria aba **Webhook** e é aplicada na hora.

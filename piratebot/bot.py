@@ -13,15 +13,26 @@ from . import power
 from .config import ASSETS, LOGS, AppConfig
 from .controller import GameController
 from .logwatcher import STATE_LABELS, STATE_LOBBY, STATE_LOGIN, STATE_MATCH, LogEvent, LogWatcher
+from .retention import prune_snapshots
+from .rewards import (
+    TOKEN_NAME,
+    ChestPrecue,
+    RewardEvent,
+    RewardGate,
+    RewardScanner,
+    slugify,
+)
 from .squad import SquadTracker
 from .vision import (
     GameWindow,
     ScreenCaptureError,
     ScreenGrabber,
     TokenDetector,
+    encode_png,
     find_game_window,
     imwrite_u,
 )
+from .webhook import WebhookMessage, WebhookNotifier
 
 _log = logging.getLogger("piratebot")
 
@@ -86,6 +97,20 @@ class PirateBot:
         self._detector: Optional[TokenDetector] = None
         self._watcher: Optional[LogWatcher] = None
         self._events: "queue.Queue[LogEvent]" = queue.Queue()
+        self._rewards: Optional[RewardScanner] = None
+        self._chest_precue = ChestPrecue(config.rewards)
+        self._reward_watch_until = 0.0
+        self._last_precue_log = 0.0
+        self._reward_gate = RewardGate(
+            config.rewards.cooldown_seconds,
+            config.rewards.token_cooldown_seconds,
+        )
+        self._webhook: Optional[WebhookNotifier] = None
+        self._webhook_lock = threading.Lock()
+        self._last_reward = ""
+        self._rewards_detected = 0
+        self._next_prune_at = 0.0
+        self._webhook_warned = False
 
         self._last_state = "unknown"
         self._counted_match = False
@@ -189,6 +214,12 @@ class PirateBot:
             f"Log conectado. Estado atual: {STATE_LABELS.get(initial, initial)}."
         )
 
+        self._rewards = RewardScanner(self.config.rewards, logger=self._emit_log)
+        self._start_webhook()
+        self._prune_snapshots("inicial")
+        interval = float(self.config.storage.prune_interval_seconds)
+        self._next_prune_at = time.time() + (interval if interval > 0 else 3600.0)
+
         self._starting_deadline = time.time() + 90.0
         self._next_visual_check = time.time() + 1.0
         self._last_focus_at = time.time()
@@ -262,6 +293,11 @@ class PirateBot:
                 self._do_postmatch(now)
             elif self.phase in (Phase.FINISHED, Phase.ERROR, Phase.STOPPED):
                 break
+
+            prune_interval = float(self.config.storage.prune_interval_seconds)
+            if prune_interval > 0 and now >= self._next_prune_at:
+                self._prune_snapshots("periódica")
+                self._next_prune_at = now + max(30.0, prune_interval)
 
             if now - self._last_status_at >= 0.5:
                 self._last_status_at = now
@@ -447,6 +483,8 @@ class PirateBot:
             self._counted_match = True
         self._match_started_at = time.time()
         self._next_scan_at = time.time() + 1.5
+        self._chest_precue.reset()
+        self._reward_watch_until = 0.0
         self._endgame_at = 0.0
         self._clicked_postmatch_at = 0.0
         self._postmatch_clicks = 0
@@ -554,6 +592,16 @@ class PirateBot:
                         f"tela de recompensa no lobby (confiança {best.score:.2f})"
                     )
                     self._save_snapshot(frame, "token_lobby")
+                    self._handle_reward(
+                        RewardEvent(
+                            name=TOKEN_NAME,
+                            kind="token",
+                            raw_text="token detectado visualmente no lobby",
+                            confidence=1.0,
+                            via="visual",
+                        ),
+                        frame,
+                    )
                     if not self.config.behavior.dry_run:
                         self._claim_reward_if_visible(frame)
                         if self.stop_event.is_set():
@@ -999,6 +1047,36 @@ class PirateBot:
         self.message = "Tentando sair da partida novamente..."
         self._emit_status()
 
+    def _scan_interval(self, default: float, now: float) -> float:
+        """Encurta a varredura enquanto um clarão de baú está sob observação."""
+        base = float(default)
+        if now < self._reward_watch_until:
+            return max(0.30, min(base, 0.60))
+        return base
+
+    def _note_chest_precue(self, frame, now: float) -> None:
+        if not self._chest_precue.update(frame, now):
+            return
+        seconds = max(1.0, float(self.config.rewards.chest_precue_watch_seconds))
+        self._reward_watch_until = max(self._reward_watch_until, now + seconds)
+        self._next_scan_at = min(self._next_scan_at, now + 0.25)
+        if now - self._last_precue_log >= 10.0:
+            self._last_precue_log = now
+            self._emit_log(
+                "Clarão dourado no centro detectado; acelerando a leitura de "
+                "recompensas. Isso não confirma o token.",
+                "debug",
+            )
+
+    def _scan_rewards(self, frame, now: float) -> Optional[RewardEvent]:
+        if self._rewards is None:
+            return None
+        return self._rewards.scan(
+            frame,
+            force=now < self._reward_watch_until,
+            now=now,
+        )
+
     def _do_match(self, now: float) -> None:
         if self._squad_leave_due_at:
             if self.token_found:
@@ -1010,9 +1088,15 @@ class PirateBot:
                 return
 
         if now >= self._next_scan_at:
-            interval = 3.0 if self.token_found else self.config.behavior.scan_interval_match
+            interval = (
+                3.0
+                if self.token_found
+                else self._scan_interval(self.config.behavior.scan_interval_match, now)
+            )
             self._next_scan_at = now + interval
             frame = self._capture("partida", log_errors=False)
+            if frame is not None and not self.token_found:
+                self._note_chest_precue(frame, now)
             if frame is not None and self._detector is not None:
                 self._suspend_counter += 1
                 if self._suspend_counter % 3 == 0:
@@ -1030,14 +1114,29 @@ class PirateBot:
                         self._next_scan_at = time.time() + 2.0
                         return
 
-                if not self.token_found:
-                    detection = self._detector.detect(frame)
-                    if detection.found and detection.best is not None:
-                        best = detection.best
-                        self._set_token_found(
-                            f"banner na partida (confiança {best.score:.2f}, {best.w}x{best.h})"
-                        )
-                        self._save_snapshot(frame, "token_banner")
+                detection = self._detector.detect(frame)
+                token_visual = bool(
+                    detection.found and detection.best is not None
+                )
+                if token_visual and not self.token_found:
+                    best = detection.best
+                    self._set_token_found(
+                        f"banner na partida (confiança {best.score:.2f}, {best.w}x{best.h})"
+                    )
+                    self._save_snapshot(frame, "token_banner")
+                if token_visual:
+                    self._handle_reward(
+                        RewardEvent(
+                            name=TOKEN_NAME,
+                            kind="token",
+                            raw_text="token detectado visualmente",
+                            confidence=1.0,
+                            via="visual",
+                        ),
+                        frame,
+                    )
+                else:
+                    self._handle_reward(self._scan_rewards(frame, now), frame)
 
                 # Se o evento de fim de partida passar despercebido, o botão
                 # JOGAR na tela indica que já estamos de volta ao lobby.
@@ -1089,8 +1188,13 @@ class PirateBot:
         frame = None
 
         if now >= self._next_scan_at:
-            self._next_scan_at = now + self.config.behavior.scan_interval_postmatch
+            interval = self._scan_interval(
+                self.config.behavior.scan_interval_postmatch, now
+            )
+            self._next_scan_at = now + interval
             frame = self._capture("pós-partida", log_errors=False)
+            if frame is not None and not self.token_found:
+                self._note_chest_precue(frame, now)
             if frame is not None and self._detector is not None:
                 self._suspend_counter += 1
                 if self._suspend_counter % 4 == 0:
@@ -1107,14 +1211,29 @@ class PirateBot:
                             )
                         return
 
-                if not self.token_found:
-                    detection = self._detector.detect(frame)
-                    if detection.found and detection.best is not None:
-                        best = detection.best
-                        self._set_token_found(
-                            f"tela de recompensa (confiança {best.score:.2f}, {best.w}x{best.h})"
-                        )
-                        self._save_snapshot(frame, "token_recompensa")
+                detection = self._detector.detect(frame)
+                token_visual = bool(
+                    detection.found and detection.best is not None
+                )
+                if token_visual and not self.token_found:
+                    best = detection.best
+                    self._set_token_found(
+                        f"tela de recompensa (confiança {best.score:.2f}, {best.w}x{best.h})"
+                    )
+                    self._save_snapshot(frame, "token_recompensa")
+                if token_visual:
+                    self._handle_reward(
+                        RewardEvent(
+                            name=TOKEN_NAME,
+                            kind="token",
+                            raw_text="token detectado visualmente",
+                            confidence=1.0,
+                            via="visual",
+                        ),
+                        frame,
+                    )
+                else:
+                    self._handle_reward(self._scan_rewards(frame, now), frame)
 
                 if now - self._last_visual_lobby_check > 4.0:
                     self._last_visual_lobby_check = now
@@ -1161,14 +1280,27 @@ class PirateBot:
 
         # A tela pode ter mudado desde a última varredura; confira o token
         # antes de decidir qual botão clicar.
-        if not self.token_found:
-            detection = self._detector.detect(frame)
-            if detection.found and detection.best is not None:
-                best = detection.best
-                self._set_token_found(
-                    f"tela de recompensa (confiança {best.score:.2f}, {best.w}x{best.h})"
-                )
-                self._save_snapshot(frame, "token_recompensa")
+        detection = self._detector.detect(frame)
+        token_visual = bool(detection.found and detection.best is not None)
+        if token_visual and not self.token_found:
+            best = detection.best
+            self._set_token_found(
+                f"tela de recompensa (confiança {best.score:.2f}, {best.w}x{best.h})"
+            )
+            self._save_snapshot(frame, "token_recompensa")
+        if token_visual:
+            self._handle_reward(
+                RewardEvent(
+                    name=TOKEN_NAME,
+                    kind="token",
+                    raw_text="token detectado visualmente",
+                    confidence=1.0,
+                    via="visual",
+                ),
+                frame,
+            )
+        else:
+            self._handle_reward(self._scan_rewards(frame, now), frame)
 
         target = self._choose_postmatch_button(frame)
         if target is None:
@@ -1297,6 +1429,16 @@ class PirateBot:
                 detection = self._detector.detect(frame)
                 if detection.found:
                     self._save_snapshot(frame, "tela_recompensa")
+                    self._handle_reward(
+                        RewardEvent(
+                            name=TOKEN_NAME,
+                            kind="token",
+                            raw_text="tela de recompensa do token",
+                            confidence=1.0,
+                            via="visual",
+                        ),
+                        frame,
+                    )
                     self._emit_log(
                         "Tela de recompensa detectada. Clicando em CLAIM ALL.",
                         "success",
@@ -1384,13 +1526,132 @@ class PirateBot:
     def _cleanup(self) -> None:
         self.stop_event.set()
         power.set_awake("bot", False)
+        with self._webhook_lock:
+            notifier = self._webhook
+            self._webhook = None
+        if notifier is not None:
+            notifier.stop(timeout=4.0)
         if self._watcher is not None:
             try:
                 self._watcher.join(timeout=1.5)
             except Exception:
                 pass
+        self._prune_snapshots("final", log=False)
         if self.phase not in (Phase.FINISHED, Phase.ERROR, Phase.STOPPED):
             self._emit_log("Bot encerrado.", "info")
+
+    # ----------------------------------------------------- recompensas/webhook
+    def _start_webhook(self) -> None:
+        if not self.config.webhook.enabled:
+            return
+        if not self.config.webhook.url.strip():
+            if not self._webhook_warned:
+                self._webhook_warned = True
+                self._emit_log(
+                    "Webhook está ativado, mas a URL está vazia. "
+                    "Configure a URL na aba Webhook.",
+                    "warn",
+                )
+            return
+        notifier = WebhookNotifier(self.config.webhook, logger=self._emit_log)
+        if notifier.start():
+            with self._webhook_lock:
+                self._webhook = notifier
+        else:
+            self._webhook_warned = True
+
+    def reload_webhook(self) -> None:
+        """Aplica uma URL/ativação nova sem reiniciar o farm."""
+        with self._webhook_lock:
+            previous = self._webhook
+            self._webhook = None
+        if previous is not None:
+            previous.stop(timeout=3.0)
+        self._webhook_warned = False
+        self._start_webhook()
+
+    def _handle_reward(self, event: Optional[RewardEvent], frame=None) -> None:
+        if event is None or not self._reward_gate.accept(event):
+            return
+
+        # O token também pode ser identificado pelo texto de recompensa
+        # ("ACESSO À LOJA PIRATA"), sem passar pelo detector visual.
+        if event.is_token and not self.token_found:
+            self._set_token_found(
+                f"recompensa identificada por {event.via} (confiança "
+                f"{event.confidence:.2f})"
+            )
+
+        self._rewards_detected += 1
+        self._last_reward = event.name
+        via = "OCR" if event.via == "ocr" else "visual"
+        self._emit_log(
+            f"Recompensa detectada: {event.name} "
+            f"(via {via}, confiança {event.confidence:.2f}).",
+            "success" if event.is_token else "info",
+        )
+        if event.raw_text and event.via == "ocr":
+            raw = " ".join(event.raw_text.split())[:180]
+            self._emit_log(f"Texto lido: {raw}", "debug")
+
+        image = None
+        if frame is not None:
+            prefix = "token_reward" if event.is_token else f"reward_{slugify(event.name)}"
+            self._save_snapshot(frame, prefix, log=False)
+            if self.config.webhook.send_screenshot:
+                image = encode_png(frame)
+
+        self.ui_queue.put(
+            {
+                "type": "reward",
+                "name": event.name,
+                "kind": event.kind,
+                "via": event.via,
+                "count": self._rewards_detected,
+            }
+        )
+
+        with self._webhook_lock:
+            notifier = self._webhook
+        if notifier is None or not notifier.active:
+            return
+        if event.is_token and not self.config.webhook.send_token:
+            return
+        if not event.is_token and not self.config.webhook.send_rewards:
+            return
+
+        queued = notifier.enqueue(
+            WebhookMessage(
+                reward=event.name,
+                kind=event.kind,
+                matches=self.matches,
+                elapsed=time.time() - self.started_at,
+                image_bytes=image,
+                filename=f"{slugify(event.name)}.png",
+            )
+        )
+        if queued:
+            self._emit_log("Captura adicionada à fila do webhook.", "debug")
+
+    def _prune_snapshots(self, reason: str, log: bool = True) -> None:
+        try:
+            result = prune_snapshots(LOGS / "snapshots", self.config.storage)
+        except Exception as exc:
+            self._emit_log(f"Falha ao limpar capturas antigas: {exc}", "debug")
+            return
+        if result.skipped:
+            return
+        if result.removed:
+            self._emit_log(
+                f"Limpeza de capturas ({reason}): {result.removed} removida(s), "
+                f"{result.freed_mb:.1f} MB liberados, {result.kept} mantida(s).",
+                "info",
+            )
+        elif log:
+            self._emit_log(
+                f"Capturas ({reason}): {result.kept} mantida(s); nada para remover.",
+                "debug",
+            )
 
     def _capture(self, label: str, log_errors: bool = True) -> Optional[object]:
         if self._grabber is None or self._controller is None:
@@ -1521,6 +1782,8 @@ class PirateBot:
                 "matches": self.matches,
                 "token_found": self.token_found,
                 "elapsed": time.time() - self.started_at,
+                "rewards": self._rewards_detected,
+                "last_reward": self._last_reward,
             }
         )
 

@@ -86,8 +86,13 @@ class DetectionConfig:
     inner_scales: tuple[int, ...] = (60, 75, 95, 120, 150, 190, 240, 300, 380, 480, 600)
     frame_scales: tuple[int, ...] = (100, 125, 155, 195, 245, 305, 380)
     inner_score: float = 0.62
-    inner_score_small: float = 0.62
+    inner_score_small: float = 0.72
     inner_small_width: int = 100
+    # O banner de recompensa fica no centro-alto da tela. Exigir essa posição
+    # elimina matches do template em texturas do cenário (canto da tela).
+    token_center_min_x: float = 0.20
+    token_center_max_x: float = 0.80
+    token_center_max_y: float = 0.70
     frame_score: float = 0.70
     gold_min: float = 0.65
     white_min_inner: float = 0.20
@@ -108,6 +113,50 @@ class DetectionConfig:
     voltar_lobby_score: float = 0.62
     # Aba de três linhas que abre as opções de saída no painel social.
     menu_tab_score: float = 0.75
+
+
+@dataclass
+class RewardConfig:
+    # Leitura do nome da recompensa por OCR do Windows.
+    ocr_enabled: bool = True
+    # Intervalo mínimo entre leituras de OCR durante a partida.
+    scan_interval: float = 2.0
+    # Evita enviar a mesma recompensa repetidamente enquanto o banner some.
+    cooldown_seconds: float = 12.0
+    token_cooldown_seconds: float = 3600.0
+    fallback_label: str = "Recompensa encontrada"
+    # Confiança mínima do brasão dourado (ícone + faixa central) para enviar a
+    # captura com o rótulo genérico quando o OCR não reconhece o idioma.
+    fallback_banner_score: float = 0.80
+    # Clarão dourado de um baú no centro: apenas acelera as próximas leituras.
+    # Não confirma token, pois baús/recompensas comuns também podem brilhar.
+    chest_precue_enabled: bool = True
+    chest_precue_min_gold: float = 0.18
+    chest_precue_delta: float = 0.07
+    chest_precue_watch_seconds: float = 10.0
+    chest_precue_cooldown_seconds: float = 15.0
+
+
+@dataclass
+class StorageConfig:
+    # Limpeza automática de logs/snapshots (0 = sem limite naquele critério).
+    snapshot_max_files: int = 300
+    snapshot_max_age_days: int = 3
+    snapshot_min_keep: int = 20
+    snapshot_grace_seconds: int = 120
+    prune_interval_seconds: float = 120.0
+
+
+@dataclass
+class WebhookConfig:
+    enabled: bool = False
+    url: str = ""
+    send_screenshot: bool = True
+    send_token: bool = True
+    send_rewards: bool = True
+    username: str = "Pirate Farm"
+    timeout_seconds: float = 15.0
+    max_queue: int = 50
 
 
 @dataclass
@@ -134,7 +183,8 @@ class BehaviorConfig:
     squad_leave_retry: float = 20.0
     squad_leave_max_attempts: int = 3
     max_matches: int = 0
-    max_runtime_minutes: int = 0
+    # Limite padrão de 3 h para reduzir exposição a bans por AFK. 0 = sem limite.
+    max_runtime_minutes: int = 180
     auto_close_success_seconds: int = 30
     dry_run: bool = False
     background_mode: bool = True
@@ -146,6 +196,9 @@ class AppConfig:
     ui: UIConfig = field(default_factory=UIConfig)
     detection: DetectionConfig = field(default_factory=DetectionConfig)
     behavior: BehaviorConfig = field(default_factory=BehaviorConfig)
+    rewards: RewardConfig = field(default_factory=RewardConfig)
+    storage: StorageConfig = field(default_factory=StorageConfig)
+    webhook: WebhookConfig = field(default_factory=WebhookConfig)
 
 
 def load_config(path: Path = CONFIG_PATH) -> AppConfig:
@@ -162,6 +215,9 @@ def load_config(path: Path = CONFIG_PATH) -> AppConfig:
         ui=_build(UIConfig, raw.get("ui", {})),
         detection=_build(DetectionConfig, raw.get("detection", {})),
         behavior=_build(BehaviorConfig, raw.get("behavior", {})),
+        rewards=_build(RewardConfig, raw.get("rewards", {})),
+        storage=_build(StorageConfig, raw.get("storage", {})),
+        webhook=_build(WebhookConfig, raw.get("webhook", {})),
     )
     cfg.game.log_path = _expand_path(cfg.game.log_path)
     return cfg
@@ -180,6 +236,9 @@ def save_config(cfg: AppConfig, path: Path = CONFIG_PATH) -> None:
         "ui": cfg.ui.__dict__,
         "detection": cfg.detection.__dict__,
         "behavior": cfg.behavior.__dict__,
+        "rewards": cfg.rewards.__dict__,
+        "storage": cfg.storage.__dict__,
+        "webhook": cfg.webhook.__dict__,
     }
     with path.open("w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2, ensure_ascii=False)

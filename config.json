@@ -52,8 +52,11 @@
       380
     ],
     "inner_score": 0.62,
-    "inner_score_small": 0.62,
+    "inner_score_small": 0.72,
     "inner_small_width": 100,
+    "token_center_min_x": 0.2,
+    "token_center_max_x": 0.8,
+    "token_center_max_y": 0.7,
     "frame_score": 0.7,
     "gold_min": 0.65,
     "white_min_inner": 0.2,
@@ -86,9 +89,39 @@
     "squad_leave_retry": 20.0,
     "squad_leave_max_attempts": 3,
     "max_matches": 0,
-    "max_runtime_minutes": 0,
+    "max_runtime_minutes": 180,
     "auto_close_success_seconds": 30,
     "dry_run": false,
     "background_mode": true
+  },
+  "rewards": {
+    "ocr_enabled": true,
+    "scan_interval": 2.0,
+    "cooldown_seconds": 12.0,
+    "token_cooldown_seconds": 3600.0,
+    "fallback_label": "Recompensa encontrada",
+    "fallback_banner_score": 0.8,
+    "chest_precue_enabled": true,
+    "chest_precue_min_gold": 0.18,
+    "chest_precue_delta": 0.07,
+    "chest_precue_watch_seconds": 10.0,
+    "chest_precue_cooldown_seconds": 15.0
+  },
+  "storage": {
+    "snapshot_max_files": 300,
+    "snapshot_max_age_days": 3,
+    "snapshot_min_keep": 20,
+    "snapshot_grace_seconds": 120,
+    "prune_interval_seconds": 120.0
+  },
+  "webhook": {
+    "enabled": false,
+    "url": "",
+    "send_screenshot": true,
+    "send_token": true,
+    "send_rewards": true,
+    "username": "Pirate Farm",
+    "timeout_seconds": 15.0,
+    "max_queue": 50
   }
 }

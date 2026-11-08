@@ -23,17 +23,32 @@ except Exception:
 
 from piratebot import power
 from piratebot.bot import PHASE_LABELS, Phase, PirateBot
-from piratebot.config import ASSETS, LOGS, ROOT, load_config, save_config
+from piratebot.config import (
+    ASSETS,
+    LOGS,
+    ROOT,
+    WebhookConfig,
+    load_config,
+    save_config,
+)
 from piratebot.hotkey import HotkeyListener
+from piratebot.retention import prune_snapshots
+from piratebot.rewards import (
+    OcrReader,
+    banner_score,
+    parse_reward_text,
+    reward_badge_score,
+)
 from piratebot.vision import (
     ScreenGrabber,
     TokenDetector,
     find_game_window,
     imwrite_u,
 )
+from piratebot.webhook import mask_webhook_url, send_test, validate_webhook_url
 
 APP_TITLE = "Pirate Farm — Fortnite"
-APP_VERSION = "1.1.4"
+APP_VERSION = "1.2.0"
 
 # Paleta do modo escuro.
 BG = "#0a0f18"
@@ -87,6 +102,7 @@ class PirateFarmApp:
         self._log_line_count = 0
         self._manual_awake = False
         self._last_power_refresh = 0.0
+        self._last_snapshot_refresh = 0.0
         self._build_ui()
         self._start_hotkey()
         self.root.after(100, self._poll)
@@ -95,8 +111,8 @@ class PirateFarmApp:
     # ------------------------------------------------------------------ UI
     def _build_ui(self) -> None:
         self.root.title(APP_TITLE)
-        self.root.geometry("760x720")
-        self.root.minsize(680, 600)
+        self.root.geometry("900x880")
+        self.root.minsize(840, 850)
         self.root.configure(bg=BG)
 
         try:
@@ -144,9 +160,45 @@ class PirateFarmApp:
             pady=4,
         ).pack(side="right", anchor="n")
 
+        # --------------------------------------------------------------- abas
+        tabbar = tk.Frame(container, bg=BG)
+        tabbar.pack(fill="x", pady=(0, 10))
+        self._tabs: dict[str, tk.Frame] = {}
+        self._tab_buttons: dict[str, tk.Button] = {}
+        self._tab_labels = {"farm": "Farm", "webhook": "Webhook"}
+        for key in ("farm", "webhook"):
+            button = tk.Button(
+                tabbar,
+                text=f"  {self._tab_labels[key]}  ",
+                font=("Segoe UI", 10, "bold"),
+                bg=BG,
+                fg=MUTED,
+                activebackground=SUBTLE_HOVER,
+                activeforeground=TEXT,
+                relief="flat",
+                bd=0,
+                highlightthickness=0,
+                padx=8,
+                pady=8,
+                cursor="hand2",
+                command=lambda k=key: self._show_tab(k),
+            )
+            button.pack(side="left", padx=(0, 4))
+            self._tab_buttons[key] = button
+        tk.Label(
+            tabbar,
+            text="F8 = parada de emergência",
+            font=("Segoe UI", 9),
+            fg=DIM,
+            bg=BG,
+        ).pack(side="right")
+        self._tabs["farm"] = tk.Frame(container, bg=BG)
+        self._tabs["webhook"] = tk.Frame(container, bg=BG)
+        self._active_tab = "farm"
+
         # ------------------------------------------------------------- status
         status_card = tk.Frame(
-            container,
+            self._tabs["farm"],
             bg=CARD,
             highlightbackground=CARD_BORDER,
             highlightthickness=1,
@@ -198,6 +250,14 @@ class PirateFarmApp:
             bg=CARD,
         )
         self.token_label.pack(side="left", padx=(24, 0))
+        self.reward_label = tk.Label(
+            stats,
+            text="Recompensas: 0",
+            font=("Segoe UI", 10, "bold"),
+            fg=MUTED,
+            bg=CARD,
+        )
+        self.reward_label.pack(side="left", padx=(24, 0))
         self.time_label = tk.Label(
             stats,
             text="Tempo: 00:00:00",
@@ -208,7 +268,7 @@ class PirateFarmApp:
         self.time_label.pack(side="right")
 
         # ----------------------------------------------------------- controles
-        controls = tk.Frame(container, bg=BG)
+        controls = tk.Frame(self._tabs["farm"], bg=BG)
         controls.pack(fill="x", pady=(14, 8))
 
         self.start_button = tk.Button(
@@ -271,17 +331,52 @@ class PirateFarmApp:
         self.token_button.pack(side="left", padx=(10, 0))
 
         # ------------------------------------------------------------ opções
-        options = tk.Frame(container, bg=BG)
+        options = tk.Frame(self._tabs["farm"], bg=BG)
         options.pack(fill="x", pady=(0, 8))
 
         self.bg_var = tk.BooleanVar(value=self.config.behavior.background_mode)
         self.sim_var = tk.BooleanVar(value=self.config.behavior.dry_run)
+        self.runtime_var = tk.StringVar(
+            value=str(self.config.behavior.max_runtime_minutes)
+        )
         self.bg_chip = self._chip(
             options, "Segundo plano", self.bg_var, command=self._update_mode_hint
         )
         self.bg_chip.pack(side="left")
         self.sim_chip = self._chip(options, "Simulação", self.sim_var)
         self.sim_chip.pack(side="left", padx=(8, 0))
+
+        runtime_box = tk.Frame(options, bg=BG)
+        runtime_box.pack(side="left", padx=(16, 0))
+        tk.Label(
+            runtime_box,
+            text="Limite (min)",
+            font=("Segoe UI", 8),
+            fg=MUTED,
+            bg=BG,
+        ).pack(side="left", padx=(0, 5))
+        self.runtime_spin = tk.Spinbox(
+            runtime_box,
+            textvariable=self.runtime_var,
+            from_=0,
+            to=1440,
+            width=5,
+            font=("Segoe UI", 9),
+            bg="#0a1422",
+            fg=TEXT,
+            buttonbackground=SUBTLE,
+            insertbackground=TEXT,
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=CARD_BORDER,
+            highlightcolor=GOLD,
+            justify="center",
+        )
+        self.runtime_spin.pack(side="left")
+        self.runtime_var.trace_add(
+            "write", lambda *_args: self._update_mode_hint()
+        )
 
         self.power_button = tk.Button(
             options,
@@ -310,7 +405,7 @@ class PirateFarmApp:
         self.power_label.pack(side="right", padx=(0, 10))
 
         # ------------------------------------------------------------- tools
-        tools = tk.Frame(container, bg=BG)
+        tools = tk.Frame(self._tabs["farm"], bg=BG)
         tools.pack(fill="x", pady=(0, 10))
         self._tool_button(tools, "Testar detecção agora", self._test_detection).pack(
             side="left"
@@ -321,17 +416,10 @@ class PirateFarmApp:
         self._tool_button(tools, "Limpar registro", self._clear_log).pack(
             side="left", padx=(8, 0)
         )
-        tk.Label(
-            tools,
-            text="F8 = parada de emergência",
-            font=("Segoe UI", 9),
-            fg=DIM,
-            bg=BG,
-        ).pack(side="right")
 
         # -------------------------------------------------------- dica de modo
         self.mode_hint_card = tk.Frame(
-            container,
+            self._tabs["farm"],
             bg="#10243a",
             highlightbackground="#1e3a5f",
             highlightthickness=1,
@@ -352,8 +440,82 @@ class PirateFarmApp:
         self.mode_hint.pack(fill="x")
         self._update_mode_hint()
 
+        # ---------------------------------------------------------- capturas
+        self.max_files_var = tk.StringVar(
+            value=str(self.config.storage.snapshot_max_files)
+        )
+        self.max_age_var = tk.StringVar(
+            value=str(self.config.storage.snapshot_max_age_days)
+        )
+        self.min_keep_var = tk.StringVar(
+            value=str(self.config.storage.snapshot_min_keep)
+        )
+        self.grace_var = tk.StringVar(
+            value=str(self.config.storage.snapshot_grace_seconds)
+        )
+
+        storage_card = tk.Frame(
+            self._tabs["farm"],
+            bg=CARD,
+            highlightbackground=CARD_BORDER,
+            highlightthickness=1,
+            padx=16,
+            pady=10,
+        )
+        storage_card.pack(fill="x", pady=(0, 10))
+        storage_head = tk.Frame(storage_card, bg=CARD)
+        storage_head.pack(fill="x")
+        tk.Label(
+            storage_head,
+            text="CAPTURAS AUTOMÁTICAS",
+            font=("Segoe UI", 9, "bold"),
+            fg=MUTED,
+            bg=CARD,
+        ).pack(side="left")
+        self.snapshot_label = tk.Label(
+            storage_head,
+            text="calculando...",
+            font=("Segoe UI", 8),
+            fg=DIM,
+            bg=CARD,
+        )
+        self.snapshot_label.pack(side="left", padx=(10, 0))
+        self._tool_button(
+            storage_head, "Abrir pasta", self._open_snapshots
+        ).pack(side="right")
+        self.clean_button = self._tool_button(
+            storage_head, "Limpar agora", self._clean_snapshots
+        )
+        self.clean_button.pack(side="right", padx=(0, 6))
+
+        storage_fields = tk.Frame(storage_card, bg=CARD)
+        storage_fields.pack(fill="x", pady=(7, 0))
+        self._spin_field(
+            storage_fields, "Máx. arquivos", self.max_files_var, 0, 5000, 6
+        )
+        self._spin_field(
+            storage_fields, "Idade máx. (dias)", self.max_age_var, 0, 365, 5
+        )
+        self._spin_field(
+            storage_fields, "Mínimo a manter", self.min_keep_var, 0, 5000, 6
+        )
+        self._spin_field(
+            storage_fields, "Carência (s)", self.grace_var, 0, 86400, 6
+        )
+        tk.Label(
+            storage_card,
+            text=(
+                "A limpeza preserva as evidências do token e as capturas mais "
+                "recentes. 0 desativa o critério."
+            ),
+            font=("Segoe UI", 8),
+            fg=DIM,
+            bg=CARD,
+            anchor="w",
+        ).pack(fill="x", pady=(5, 0))
+
         # --------------------------------------------------------------- log
-        log_header = tk.Frame(container, bg=BG)
+        log_header = tk.Frame(self._tabs["farm"], bg=BG)
         log_header.pack(fill="x")
         tk.Label(
             log_header,
@@ -371,7 +533,7 @@ class PirateFarmApp:
         ).pack(side="right")
 
         log_frame = tk.Frame(
-            container,
+            self._tabs["farm"],
             bg="#08101d",
             highlightbackground=CARD_BORDER,
             highlightthickness=1,
@@ -379,7 +541,7 @@ class PirateFarmApp:
         log_frame.pack(fill="both", expand=True)
         self.log_text = tk.Text(
             log_frame,
-            height=14,
+            height=10,
             wrap="word",
             bg="#08101d",
             fg="#dbe7f5",
@@ -402,10 +564,10 @@ class PirateFarmApp:
         self.log_text.configure(state="disabled")
 
         footer = tk.Frame(container, bg=BG)
-        footer.pack(fill="x", pady=(8, 0))
+        footer.pack(side="bottom", fill="x", pady=(8, 0))
         tk.Label(
             footer,
-            text="100% local · sem acesso à internet",
+            text="Capturas locais · webhook opcional",
             font=("Segoe UI", 8),
             fg=DIM,
             bg=BG,
@@ -435,6 +597,10 @@ class PirateFarmApp:
         )
         for delay in (350, 1500, 3000):
             self.root.after(delay, lambda: self._apply_dark_titlebar(self.root))
+
+        self._build_webhook_tab()
+        self._show_tab("farm")
+        self._refresh_snapshot_stats()
 
     # ------------------------------------------------------------- widgets
     def _chip(self, parent, text: str, variable: tk.BooleanVar, command=None):
@@ -492,6 +658,372 @@ class PirateFarmApp:
             command=command,
         )
 
+    def _spin_field(
+        self,
+        parent,
+        label: str,
+        variable: tk.StringVar,
+        minimum: int,
+        maximum: int,
+        width: int = 6,
+    ) -> tk.Spinbox:
+        box = tk.Frame(parent, bg=CARD)
+        box.pack(side="left", padx=(0, 20))
+        tk.Label(
+            box,
+            text=label,
+            font=("Segoe UI", 8),
+            fg=MUTED,
+            bg=CARD,
+            anchor="w",
+        ).pack(anchor="w")
+        spin = tk.Spinbox(
+            box,
+            textvariable=variable,
+            from_=minimum,
+            to=maximum,
+            width=width,
+            font=("Segoe UI", 9),
+            bg="#0a1422",
+            fg=TEXT,
+            buttonbackground=SUBTLE,
+            insertbackground=TEXT,
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=CARD_BORDER,
+            highlightcolor=GOLD,
+            justify="center",
+        )
+        spin.pack(anchor="w", pady=(2, 0))
+        return spin
+
+    def _show_tab(self, key: str) -> None:
+        if key not in self._tabs:
+            return
+        self._active_tab = key
+        for name, frame in self._tabs.items():
+            if name == key:
+                frame.pack(fill="both", expand=True)
+            else:
+                frame.pack_forget()
+        for name, button in self._tab_buttons.items():
+            selected = name == key
+            button.config(
+                text=("▸  " if selected else "  ") + self._tab_labels[name],
+                bg=CARD if selected else BG,
+                fg=GOLD if selected else MUTED,
+                activebackground=CARD if selected else SUBTLE_HOVER,
+                activeforeground=GOLD if selected else TEXT,
+            )
+
+    def _build_webhook_tab(self) -> None:
+        tab = self._tabs["webhook"]
+
+        intro = tk.Frame(
+            tab,
+            bg=CARD,
+            highlightbackground=CARD_BORDER,
+            highlightthickness=1,
+            padx=18,
+            pady=14,
+        )
+        intro.pack(fill="x")
+        tk.Label(
+            intro,
+            text="Webhook de recompensas",
+            font=("Segoe UI", 15, "bold"),
+            fg=TEXT,
+            bg=CARD,
+            anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            intro,
+            text=(
+                "Sempre que um banner de recompensa aparecer no centro da tela, "
+                "o Pirate Farm envia uma captura PNG e o nome identificado. "
+                "Discord é detectado automaticamente; outros endereços recebem "
+                "multipart/form-data com os campos content, reward, kind e file."
+            ),
+            font=("Segoe UI", 9),
+            fg=MUTED,
+            bg=CARD,
+            anchor="w",
+            justify="left",
+            wraplength=800,
+        ).pack(fill="x", pady=(4, 0))
+
+        config_card = tk.Frame(
+            tab,
+            bg=CARD,
+            highlightbackground=CARD_BORDER,
+            highlightthickness=1,
+            padx=18,
+            pady=14,
+        )
+        config_card.pack(fill="x", pady=(10, 0))
+
+        self.wh_enabled_var = tk.BooleanVar(value=self.config.webhook.enabled)
+        self.wh_shot_var = tk.BooleanVar(value=self.config.webhook.send_screenshot)
+        self.wh_token_var = tk.BooleanVar(value=self.config.webhook.send_token)
+        self.wh_rewards_var = tk.BooleanVar(value=self.config.webhook.send_rewards)
+
+        chips = tk.Frame(config_card, bg=CARD)
+        chips.pack(fill="x")
+        self._chip(chips, "Webhook ativado", self.wh_enabled_var).pack(side="left")
+        self._chip(chips, "Enviar captura", self.wh_shot_var).pack(
+            side="left", padx=(8, 0)
+        )
+        self._chip(chips, "Token", self.wh_token_var).pack(side="left", padx=(8, 0))
+        self._chip(chips, "Outras recompensas", self.wh_rewards_var).pack(
+            side="left", padx=(8, 0)
+        )
+
+        tk.Label(
+            config_card,
+            text="URL do webhook",
+            font=("Segoe UI", 9, "bold"),
+            fg=MUTED,
+            bg=CARD,
+            anchor="w",
+        ).pack(fill="x", pady=(12, 3))
+        self.wh_url_var = tk.StringVar(value=self.config.webhook.url)
+        self.wh_url_entry = tk.Entry(
+            config_card,
+            textvariable=self.wh_url_var,
+            font=("Consolas", 9),
+            bg="#0a1422",
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=CARD_BORDER,
+            highlightcolor=GOLD,
+        )
+        self.wh_url_entry.pack(fill="x", ipady=7)
+        tk.Label(
+            config_card,
+            text=(
+                "Exemplo: https://discord.com/api/webhooks/…  ·  "
+                "a URL é mascarada nos logs."
+            ),
+            font=("Segoe UI", 8),
+            fg=DIM,
+            bg=CARD,
+            anchor="w",
+        ).pack(fill="x", pady=(3, 0))
+
+        identity = tk.Frame(config_card, bg=CARD)
+        identity.pack(fill="x", pady=(10, 0))
+        tk.Label(
+            identity,
+            text="Nome exibido",
+            font=("Segoe UI", 9, "bold"),
+            fg=MUTED,
+            bg=CARD,
+        ).pack(side="left")
+        self.wh_username_var = tk.StringVar(
+            value=self.config.webhook.username or "Pirate Farm"
+        )
+        tk.Entry(
+            identity,
+            textvariable=self.wh_username_var,
+            font=("Segoe UI", 9),
+            bg="#0a1422",
+            fg=TEXT,
+            insertbackground=TEXT,
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=CARD_BORDER,
+            highlightcolor=GOLD,
+            width=28,
+        ).pack(side="left", padx=(10, 0), ipady=5)
+        self.wh_status_label = tk.Label(
+            identity,
+            text="",
+            font=("Segoe UI", 9, "bold"),
+            fg=MUTED,
+            bg=CARD,
+            anchor="e",
+        )
+        self.wh_status_label.pack(side="right")
+
+        actions = tk.Frame(config_card, bg=CARD)
+        actions.pack(fill="x", pady=(12, 0))
+        self.wh_save_button = tk.Button(
+            actions,
+            text="Salvar configuração",
+            font=("Segoe UI", 10, "bold"),
+            bg="#15803d",
+            fg="#ffffff",
+            activebackground="#166534",
+            activeforeground="#ffffff",
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            padx=18,
+            pady=8,
+            cursor="hand2",
+            command=self._save_webhook_settings,
+        )
+        self.wh_save_button.pack(side="left")
+        self.wh_test_button = tk.Button(
+            actions,
+            text="Testar webhook",
+            font=("Segoe UI", 9, "bold"),
+            bg=SUBTLE,
+            fg="#cbd5e1",
+            activebackground=SUBTLE_HOVER,
+            activeforeground=TEXT,
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            padx=15,
+            pady=8,
+            cursor="hand2",
+            command=self._test_webhook,
+        )
+        self.wh_test_button.pack(side="left", padx=(8, 0))
+        tk.Label(
+            actions,
+            text="As alterações valem também para o farm em execução.",
+            font=("Segoe UI", 8),
+            fg=DIM,
+            bg=CARD,
+        ).pack(side="right")
+
+        ocr_card = tk.Frame(
+            tab,
+            bg=CARD,
+            highlightbackground=CARD_BORDER,
+            highlightthickness=1,
+            padx=18,
+            pady=12,
+        )
+        ocr_card.pack(fill="x", pady=(10, 0))
+        ocr_head = tk.Frame(ocr_card, bg=CARD)
+        ocr_head.pack(fill="x")
+        tk.Label(
+            ocr_head,
+            text="Leitura do nome (OCR)",
+            font=("Segoe UI", 10, "bold"),
+            fg=TEXT,
+            bg=CARD,
+        ).pack(side="left")
+        self.ocr_test_button = tk.Button(
+            ocr_head,
+            text="Testar OCR na tela",
+            font=("Segoe UI", 9),
+            bg=SUBTLE,
+            fg="#cbd5e1",
+            activebackground=SUBTLE_HOVER,
+            activeforeground=TEXT,
+            relief="flat",
+            bd=0,
+            highlightthickness=0,
+            padx=12,
+            pady=6,
+            cursor="hand2",
+            command=self._test_ocr,
+        )
+        self.ocr_test_button.pack(side="right")
+        self.ocr_status_label = tk.Label(
+            ocr_card,
+            text="",
+            font=("Segoe UI", 9),
+            fg=MUTED,
+            bg=CARD,
+            anchor="w",
+            justify="left",
+            wraplength=780,
+        )
+        self.ocr_status_label.pack(fill="x", pady=(5, 0))
+        self._refresh_ocr_status()
+
+        preview = tk.Frame(
+            tab,
+            bg=CARD,
+            highlightbackground=CARD_BORDER,
+            highlightthickness=1,
+            padx=18,
+            pady=12,
+        )
+        preview.pack(fill="x", pady=(10, 0))
+        tk.Label(
+            preview,
+            text="Mensagem de exemplo",
+            font=("Segoe UI", 9, "bold"),
+            fg=MUTED,
+            bg=CARD,
+            anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            preview,
+            text="🎁  Ferramenta Espírito\nAnexo: captura PNG · Partida: 3 · Tempo: 00:42:10",
+            font=("Segoe UI", 9),
+            fg="#dbe7f5",
+            bg="#0a1422",
+            anchor="w",
+            justify="left",
+            padx=12,
+            pady=9,
+        ).pack(fill="x", pady=(5, 0))
+        tk.Label(
+            preview,
+            text=(
+                "Sem OCR legível, o envio continua com o nome "
+                "“Recompensa encontrada”."
+            ),
+            font=("Segoe UI", 8),
+            fg=DIM,
+            bg=CARD,
+            anchor="w",
+        ).pack(fill="x", pady=(5, 0))
+
+        self._refresh_webhook_status()
+
+    def _refresh_webhook_status(self) -> None:
+        if not hasattr(self, "wh_status_label"):
+            return
+        config = self.config.webhook
+        if config.enabled and config.url.strip():
+            self.wh_status_label.config(
+                text=f"Ativo: {mask_webhook_url(config.url)}", fg=GREEN
+            )
+        elif config.enabled:
+            self.wh_status_label.config(text="Falta a URL", fg=AMBER)
+        else:
+            self.wh_status_label.config(text="Desativado", fg=DIM)
+
+    def _refresh_ocr_status(self) -> None:
+        if not hasattr(self, "ocr_status_label"):
+            return
+        try:
+            reader = OcrReader()
+            if reader.available():
+                self.ocr_status_label.config(
+                    text=(
+                        "OCR do Windows disponível. O nome é lido no idioma do "
+                        "sistema; o texto reconhecido também aparece no registro."
+                    ),
+                    fg=MUTED,
+                )
+            else:
+                self.ocr_status_label.config(
+                    text=(
+                        "OCR do Windows indisponível. As capturas continuam sendo "
+                        "enviadas com o nome genérico."
+                    ),
+                    fg=AMBER,
+                )
+        except Exception as exc:
+            self.ocr_status_label.config(
+                text=f"OCR indisponível ({exc}). Será usado o nome genérico.",
+                fg=AMBER,
+            )
+
     def _update_mode_hint(self) -> None:
         if not hasattr(self, "mode_hint"):
             return
@@ -510,6 +1042,17 @@ class PirateFarmApp:
                 "durante o farm. Se o jogo perder o foco, o bot tenta clicar em "
                 "CONTINUAR JOGANDO."
             )
+        try:
+            limit = int(self.runtime_var.get())
+        except (TypeError, ValueError):
+            limit = self.config.behavior.max_runtime_minutes
+        if limit <= 0:
+            text += (
+                " ATENÇÃO: execução sem limite. Farmar por horas seguidas "
+                "aumenta muito o risco de ban por AFK."
+            )
+        else:
+            text += f" Limite de execução: {limit} min."
         self.mode_hint_card.config(bg=card_bg, highlightbackground=border)
         self.mode_hint.config(text=text, bg=card_bg, fg=foreground)
 
@@ -719,12 +1262,30 @@ class PirateFarmApp:
         self.stop_event.clear()
         self.manual_token.clear()
         self._success_scheduled = False
+        if not self._apply_webhook_fields() or not self._apply_storage_fields():
+            return
+        if not self._apply_runtime_field():
+            return
         self.config.behavior.dry_run = bool(self.sim_var.get())
         self.config.behavior.background_mode = bool(self.bg_var.get())
         try:
             save_config(self.config)
         except Exception as exc:
             self._log(f"Não consegui salvar as preferências: {exc}", "debug")
+
+        limit = self.config.behavior.max_runtime_minutes
+        if limit <= 0:
+            self._log(
+                "Aviso: o farm está sem limite de execução. Deixar horas seguidas "
+                "aumenta muito o risco de ban por AFK. Recomendado: 120 a 180 min.",
+                "warn",
+            )
+        elif limit > 240:
+            self._log(
+                f"Aviso: limite de {limit} min é longo. Sessões acima de 4 h "
+                "aumentam o risco de ban por AFK.",
+                "warn",
+            )
 
         self.bot = PirateBot(
             self.config,
@@ -827,6 +1388,205 @@ class PirateFarmApp:
         except Exception as exc:
             self._log(f"Não consegui abrir a pasta de logs: {exc}", "error")
 
+    # ------------------------------------------------------- capturas/webhook
+    def _open_snapshots(self) -> None:
+        folder = LOGS / "snapshots"
+        folder.mkdir(parents=True, exist_ok=True)
+        try:
+            os.startfile(str(folder))
+        except Exception as exc:
+            self._log(f"Não consegui abrir a pasta de capturas: {exc}", "error")
+
+    def _apply_runtime_field(self) -> bool:
+        try:
+            value = int(self.runtime_var.get())
+        except (TypeError, ValueError):
+            self._dialog(
+                "Limite de execução",
+                "Informe o limite em minutos usando apenas números inteiros "
+                "(0 = sem limite).",
+            )
+            return False
+        value = max(0, min(1440, value))
+        self.runtime_var.set(str(value))
+        self.config.behavior.max_runtime_minutes = value
+        return True
+
+    def _apply_storage_fields(self) -> bool:
+        try:
+            values = {
+                "snapshot_max_files": int(self.max_files_var.get()),
+                "snapshot_max_age_days": int(self.max_age_var.get()),
+                "snapshot_min_keep": int(self.min_keep_var.get()),
+                "snapshot_grace_seconds": int(self.grace_var.get()),
+            }
+        except (TypeError, ValueError):
+            self._dialog(
+                "Capturas automáticas",
+                "Use apenas números inteiros nos campos de retenção.",
+            )
+            return False
+        for key, value in values.items():
+            setattr(self.config.storage, key, max(0, value))
+        return True
+
+    def _refresh_snapshot_stats(self) -> None:
+        if not hasattr(self, "snapshot_label"):
+            return
+        folder = LOGS / "snapshots"
+        count = 0
+        total = 0
+        try:
+            for path in folder.glob("*.png"):
+                try:
+                    total += path.stat().st_size
+                    count += 1
+                except OSError:
+                    continue
+        except OSError:
+            pass
+        size = total / (1024 * 1024)
+        self.snapshot_label.config(text=f"{count} capturas · {size:.0f} MB")
+        self._last_snapshot_refresh = time.time()
+
+    def _clean_snapshots(self) -> None:
+        if not self._apply_storage_fields():
+            return
+        try:
+            save_config(self.config)
+        except Exception as exc:
+            self._log(f"Não consegui salvar a retenção: {exc}", "debug")
+        self._log("Limpando capturas antigas...", "info")
+        self.clean_button.config(state="disabled", text="Limpando...")
+
+        def run() -> None:
+            try:
+                result = prune_snapshots(LOGS / "snapshots", self.config.storage)
+                self.ui_queue.put(
+                    {
+                        "type": "prune_result",
+                        "removed": result.removed,
+                        "freed": result.freed_bytes,
+                        "kept": result.kept,
+                        "skipped": result.skipped,
+                    }
+                )
+            except Exception as exc:
+                self.ui_queue.put({"type": "prune_result", "error": str(exc)})
+
+        threading.Thread(target=run, name="SnapshotCleanup", daemon=True).start()
+
+    def _apply_webhook_fields(self) -> bool:
+        if not hasattr(self, "wh_url_var"):
+            return True
+        enabled = bool(self.wh_enabled_var.get())
+        url = self.wh_url_var.get().strip()
+        if url:
+            try:
+                url = validate_webhook_url(url)
+            except ValueError as exc:
+                self._dialog("Webhook", str(exc))
+                return False
+        if enabled and not url:
+            self._dialog(
+                "Webhook",
+                "Informe a URL do webhook ou desmarque “Webhook ativado”.",
+            )
+            return False
+        config = self.config.webhook
+        config.enabled = enabled
+        config.url = url
+        config.send_screenshot = bool(self.wh_shot_var.get())
+        config.send_token = bool(self.wh_token_var.get())
+        config.send_rewards = bool(self.wh_rewards_var.get())
+        config.username = self.wh_username_var.get().strip() or "Pirate Farm"
+        return True
+
+    def _save_webhook_settings(self) -> None:
+        if not self._apply_webhook_fields():
+            return
+        try:
+            save_config(self.config)
+        except Exception as exc:
+            self._log(f"Não consegui salvar o webhook: {exc}", "error")
+            return
+        if self.bot is not None and self.bot.is_running():
+            self.bot.reload_webhook()
+            self._log(
+                "Configuração do webhook aplicada ao farm em execução.", "info"
+            )
+        self._refresh_webhook_status()
+        self._log("Configuração do webhook salva.", "success")
+
+    def _test_webhook(self) -> None:
+        url = self.wh_url_var.get().strip()
+        try:
+            url = validate_webhook_url(url)
+        except ValueError as exc:
+            self._dialog("Teste do webhook", str(exc))
+            return
+        config = WebhookConfig(
+            **{
+                **self.config.webhook.__dict__,
+                "enabled": True,
+                "url": url,
+                "send_screenshot": False,
+            }
+        )
+        masked = mask_webhook_url(url)
+        self.wh_test_button.config(state="disabled", text="Enviando...")
+        self.wh_status_label.config(text="Enviando teste...", fg=AMBER)
+        self._log(f"Enviando teste para {masked}...", "info")
+
+        def run() -> None:
+            result = send_test(config)
+            self.ui_queue.put(
+                {
+                    "type": "webhook_test",
+                    "ok": result.ok,
+                    "status": result.status,
+                    "detail": result.detail,
+                    "url": masked,
+                }
+            )
+
+        threading.Thread(target=run, name="WebhookTest", daemon=True).start()
+
+    def _test_ocr(self) -> None:
+        use_background = bool(self.bg_var.get())
+        self.ocr_test_button.config(state="disabled", text="Lendo...")
+        self._log("Capturando a tela para testar o OCR...", "info")
+
+        def run() -> None:
+            try:
+                window = find_game_window(self.config.game.window_title)
+                grabber = ScreenGrabber(window)
+                frame = (
+                    grabber.capture_background()
+                    if use_background
+                    else grabber.capture()
+                )
+                score = banner_score(frame)
+                badge = reward_badge_score(frame)
+                reader = OcrReader()
+                text = reader.recognize(frame)
+                event = parse_reward_text(text)
+                self.ui_queue.put(
+                    {
+                        "type": "ocr_test",
+                        "ok": True,
+                        "score": score,
+                        "badge": badge,
+                        "text": text,
+                        "event": event,
+                        "size": (frame.shape[1], frame.shape[0]),
+                    }
+                )
+            except Exception as exc:
+                self.ui_queue.put({"type": "ocr_test", "ok": False, "error": str(exc)})
+
+        threading.Thread(target=run, name="OcrTest", daemon=True).start()
+
     # ---------------------------------------------------------------- poll
     def _poll(self) -> None:
         while True:
@@ -840,6 +1600,8 @@ class PirateFarmApp:
         if now - self._last_power_refresh >= 0.5:
             self._last_power_refresh = now
             self._refresh_power_ui()
+        if now - self._last_snapshot_refresh >= 10.0:
+            self._refresh_snapshot_stats()
         self.root.after(100, self._poll)
 
     def _handle_message(self, message: dict) -> None:
@@ -858,6 +1620,9 @@ class PirateFarmApp:
                 text="Token: SIM" if token else "Token: não",
                 fg=GREEN if token else RED,
             )
+            self.reward_label.config(
+                text=f"Recompensas: {message.get('rewards', 0)}"
+            )
             self.time_label.config(
                 text=f"Tempo: {_format_elapsed(message.get('elapsed', 0))}"
             )
@@ -868,6 +1633,14 @@ class PirateFarmApp:
                 Phase.MATCH.value,
                 "Token detectado! Vou esperar a partida terminar para encerrar.",
             )
+
+        elif kind == "reward":
+            self.reward_label.config(
+                text=f"Recompensas: {message.get('count', 0)}"
+            )
+            name = message.get("name", "")
+            if name:
+                self.reward_label.config(fg=GOLD)
 
         elif kind == "success":
             text = message.get("text", "Token encontrado!")
@@ -903,6 +1676,75 @@ class PirateFarmApp:
             text = message.get("text", "Falha no teste.")
             self._log(f"Teste de detecção falhou: {text}", "error")
             self._set_status(Phase.ERROR.value, f"Teste falhou: {text}")
+
+        elif kind == "webhook_test":
+            self.wh_test_button.config(state="normal", text="Testar webhook")
+            status = message.get("status") or "sem resposta"
+            if message.get("ok"):
+                self.wh_status_label.config(text=f"Teste OK ({status})", fg=GREEN)
+                self._log(
+                    f"Webhook de teste enviado com sucesso ({status}).", "success"
+                )
+            else:
+                detail = str(message.get("detail", ""))[:300]
+                self.wh_status_label.config(text=f"Falha ({status})", fg=RED)
+                self._log(
+                    f"Teste do webhook falhou ({status}): {detail}", "warn"
+                )
+
+        elif kind == "ocr_test":
+            self.ocr_test_button.config(state="normal", text="Testar OCR na tela")
+            if not message.get("ok"):
+                error = message.get("error", "falha desconhecida")
+                self._log(f"Teste do OCR falhou: {error}", "error")
+            else:
+                score = float(message.get("score", 0.0))
+                badge = float(message.get("badge", 0.0))
+                raw = " ".join(str(message.get("text", "")).split())[:300]
+                self._log(
+                    f"OCR de teste: banner {score:.2f}; brasão {badge:.2f}; "
+                    f"texto: {raw or '(vazio)'}.",
+                    "info",
+                )
+                event = message.get("event")
+                if event is not None:
+                    self._log(
+                        f"Recompensa reconhecida no teste: {event.name}.",
+                        "success",
+                    )
+                else:
+                    self._log(
+                        "Nenhum cabeçalho de recompensa foi reconhecido no texto.",
+                        "info",
+                    )
+
+        elif kind == "prune_result":
+            self.clean_button.config(state="normal", text="Limpar agora")
+            if message.get("error"):
+                self._log(
+                    f"Falha ao limpar capturas: {message.get('error')}", "error"
+                )
+            elif message.get("skipped"):
+                self._log(
+                    "A limpeza já está rodando em outro ponto; tente de novo.",
+                    "warn",
+                )
+            else:
+                removed = int(message.get("removed", 0))
+                freed = float(message.get("freed", 0)) / (1024 * 1024)
+                kept = int(message.get("kept", 0))
+                if removed:
+                    self._log(
+                        f"Limpeza concluída: {removed} captura(s) removida(s), "
+                        f"{freed:.1f} MB liberados, {kept} mantida(s).",
+                        "success",
+                    )
+                else:
+                    self._log(
+                        f"Limpeza concluída: nada para remover; {kept} mantida(s).",
+                        "info",
+                    )
+            self._refresh_snapshot_stats()
 
     def _handle_test_result(self, message: dict) -> None:
         width, height = message.get("size", (0, 0))

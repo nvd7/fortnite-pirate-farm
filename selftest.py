@@ -11,14 +11,42 @@ import sys
 import tempfile
 import threading
 import time
+import os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from piratebot import power
 from piratebot.bot import Phase, PirateBot
-from piratebot.config import ASSETS, LOGS, load_config
+from piratebot.config import (
+    ASSETS,
+    LOGS,
+    RewardConfig,
+    StorageConfig,
+    WebhookConfig,
+    load_config,
+    save_config,
+)
 from piratebot.logwatcher import LogEvent, LogWatcher, parse_line, player_key
+from piratebot.retention import prune_snapshots
+from piratebot.rewards import (
+    TOKEN_NAME,
+    ChestPrecue,
+    RewardEvent,
+    RewardGate,
+    RewardScanner,
+    banner_score,
+    parse_reward_text,
+    reward_badge_score,
+)
 from piratebot.squad import SquadTracker
 from piratebot.vision import TokenDetector, imread_u, imwrite_u
+from piratebot.webhook import (
+    WebhookMessage,
+    build_payload,
+    mask_webhook_url,
+    send_message,
+    send_test,
+)
 from tools.check_docs import check_file
 from tools.check_postmatch import inspect_frame
 
@@ -672,6 +700,21 @@ def main() -> int:
         f"fase={bot_transition.phase.value} partidas={bot_transition.matches}",
     )
 
+    bot_transition._beep_token = lambda: None  # type: ignore[method-assign]
+    bot_transition.token_found = False
+    bot_transition._handle_reward(RewardEvent("Ferramenta Espirito", kind="item"))
+    check(
+        "Recompensa comum não marca o token",
+        not bot_transition.token_found,
+    )
+    bot_transition._handle_reward(
+        RewardEvent(TOKEN_NAME, kind="token", via="ocr", confidence=1.0)
+    )
+    check(
+        "Token lido pelo OCR marca o estado do token",
+        bot_transition.token_found,
+    )
+
     false_positive = LOGS / "snapshots" / "token_banner_20261105_160659.png"
     if false_positive.exists():
         print()
@@ -688,6 +731,29 @@ def main() -> int:
                 else "limpo"
             )
             check("Sem token no falso positivo do banner", not detection.found, detail)
+
+    false_positive_gameplay = (
+        LOGS / "snapshots" / "token_banner_20261106_171829.png"
+    )
+    if false_positive_gameplay.exists():
+        print()
+        print("Falso positivo em gameplay (captura local, não versionada):")
+        image = imread_u(false_positive_gameplay)
+        if image is None:
+            check("Sem token na textura de gameplay", False, "falha ao ler a imagem")
+        else:
+            detection = detector.detect(image)
+            check(
+                "Sem token na textura de gameplay",
+                not detection.found,
+                (
+                    f"falso positivo: {detection.best.kind} "
+                    f"score={detection.best.score:.2f} em "
+                    f"({detection.best.x},{detection.best.y})"
+                    if detection.best
+                    else "limpo"
+                ),
+            )
 
     background_lobby = LOGS / "fortnite_bg.png"
     if background_lobby.exists():
@@ -773,6 +839,367 @@ def main() -> int:
             f"Evento {expected_kind}/{expected_value or '-'}",
             ok,
             f"obtido {event.kind}/{event.value}" if event else "nenhum evento",
+        )
+
+    print()
+    print("Recompensas (OCR e parser):")
+    item_pt = parse_reward_text("VOCÊ ENCONTROU\nFERRAMENTA ESPÍRITO")
+    check(
+        "Parser identifica item em português",
+        item_pt is not None
+        and item_pt.kind == "item"
+        and "Ferramenta" in item_pt.name,
+        repr(item_pt),
+    )
+    token_en = parse_reward_text("YOU FOUND\nPIRATE SHOP ACCESS")
+    check(
+        "Parser identifica o token em inglês",
+        token_en is not None
+        and token_en.kind == "token"
+        and token_en.name == TOKEN_NAME,
+        repr(token_en),
+    )
+    item_en = parse_reward_text("YOU FOUND\nSPIRIT TOOL")
+    check(
+        "Parser identifica item em inglês",
+        item_en is not None
+        and item_en.kind == "item"
+        and item_en.name == "Spirit Tool",
+        repr(item_en),
+    )
+    check(
+        "Parser ignora texto sem cabeçalho",
+        parse_reward_text("0:03\nARLONU\n") is None,
+    )
+    item_ar = parse_reward_text("لقد عثرت على أداة روح")
+    check(
+        "Parser identifica item em árabe",
+        item_ar is not None
+        and item_ar.kind == "item"
+        and item_ar.name == "أداة روح",
+        repr(item_ar),
+    )
+    token_ar = parse_reward_text("لقد عثرت على متجر القراصنة")
+    check(
+        "Parser identifica o token em árabe",
+        token_ar is not None
+        and token_ar.kind == "token"
+        and token_ar.name == TOKEN_NAME,
+        repr(token_ar),
+    )
+    item_tail = parse_reward_text("VOCÊ ENCONTROU\nDISPOSITIVO\n\\ ELEMENTAL 1.,")
+    check(
+        "Parser remove quantidade/pontuação colada pelo OCR",
+        item_tail is not None
+        and item_tail.kind == "item"
+        and item_tail.name == "Dispositivo Elemental",
+        repr(item_tail),
+    )
+    item_quantity = parse_reward_text("VOCÊ ENCONTROU\nFERRAMENTA ESPÍRITO x2")
+    check(
+        "Parser remove quantidade no formato x2",
+        item_quantity is not None
+        and item_quantity.name == "Ferramenta Espírito",
+        repr(item_quantity),
+    )
+    item_model = parse_reward_text("VOCÊ ENCONTROU\nMODELO G 63")
+    check(
+        "Parser preserva números de modelo com dois dígitos",
+        item_model is not None and item_model.name.endswith("G 63"),
+        repr(item_model),
+    )
+
+    banner_image = imread_u(TEST_ASSETS / "banner_generic.jpg")
+    gameplay_image = imread_u(TEST_ASSETS / "fortnite_now.png")
+    check(
+        "Brasão do banner genérico é reconhecido",
+        banner_image is not None
+        and reward_badge_score(banner_image) >= config.rewards.fallback_banner_score,
+        (
+            f"score={reward_badge_score(banner_image):.2f}"
+            if banner_image is not None
+            else "imagem ausente"
+        ),
+    )
+    check(
+        "Gameplay normal não atinge o fallback visual",
+        gameplay_image is not None
+        and reward_badge_score(gameplay_image) < config.rewards.fallback_banner_score,
+        (
+            f"score={reward_badge_score(gameplay_image):.2f}"
+            if gameplay_image is not None
+            else "imagem ausente"
+        ),
+    )
+    check(
+        "Banner de recompensa ainda é localizado pelo detector antigo",
+        banner_image is not None
+        and banner_score(banner_image) >= 0.15,
+        f"score={banner_score(banner_image):.2f}" if banner_image is not None else "imagem ausente",
+    )
+
+    if banner_image is not None:
+        scanner = RewardScanner(RewardConfig(ocr_enabled=False, scan_interval=0.0))
+        visual_event = scanner.scan(banner_image, now=1.0)
+        check(
+            "Fallback visual envia o banner sem OCR",
+            visual_event is not None
+            and visual_event.via == "visual"
+            and visual_event.name == config.rewards.fallback_label,
+            repr(visual_event),
+        )
+    if gameplay_image is not None:
+        scanner = RewardScanner(RewardConfig(ocr_enabled=False, scan_interval=0.0))
+        check(
+            "Fallback visual ignora gameplay comum",
+            scanner.scan(gameplay_image, now=1.0) is None,
+        )
+
+        precue = ChestPrecue(RewardConfig())
+        precue.update(gameplay_image, now=1.0)
+        check(
+            "Precue não dispara em imagem estática",
+            not precue.update(gameplay_image, now=2.0),
+        )
+
+    import cv2
+    import numpy as np
+
+    precue = ChestPrecue(RewardConfig())
+    dark = np.zeros((720, 1280, 3), dtype=np.uint8)
+    gold = dark.copy()
+    cv2.rectangle(gold, (420, 220), (860, 560), (0, 180, 255), -1)
+    check(
+        "Precue usa o primeiro quadro como referência",
+        not precue.update(dark, now=10.0),
+    )
+    check(
+        "Precue detecta clarão dourado central",
+        precue.update(gold, now=11.0),
+    )
+    precue.update(dark, now=11.5)
+    check(
+        "Precue respeita o cooldown entre clarões",
+        not precue.update(gold, now=11.6),
+    )
+
+    if banner_image is not None:
+        scanner = RewardScanner(RewardConfig(ocr_enabled=False, scan_interval=60.0))
+        first = scanner.scan(banner_image, now=20.0)
+        throttled = scanner.scan(banner_image, now=21.0)
+        forced = scanner.scan(banner_image, now=21.1, force=True)
+        check(
+            "Precue força leitura mesmo dentro do intervalo do OCR",
+            first is not None and throttled is None and forced is not None,
+        )
+
+    gate = RewardGate(cooldown=10.0, token_cooldown=60.0)
+    event = RewardEvent("Ferramenta Espirito")
+    check("Gate aceita a primeira recompensa", gate.accept(event, now=100.0))
+    check(
+        "Gate bloqueia a mesma recompensa no cooldown",
+        not gate.accept(event, now=105.0),
+    )
+    check("Gate libera depois do cooldown", gate.accept(event, now=111.0))
+    token_event = RewardEvent(TOKEN_NAME, kind="token")
+    check("Gate aceita o token", gate.accept(token_event, now=200.0))
+    check(
+        "Gate não repete o token",
+        not gate.accept(token_event, now=220.0),
+    )
+
+    print()
+    print("Limpeza de capturas:")
+    with tempfile.TemporaryDirectory() as temp:
+        folder = Path(temp)
+        now = time.time()
+        for index in range(10):
+            path = folder / f"pos_partida_{index}.png"
+            path.write_bytes(b"x" * (index + 1))
+            stamp = now - (index + 1) * 6 * 3600
+            os.utime(path, (stamp, stamp))
+        for name in ("token_banner_x.png", "reward_item_x.png", "tela_recompensa_x.png"):
+            path = folder / name
+            path.write_bytes(b"evidence")
+            stamp = now - 96 * 3600
+            os.utime(path, (stamp, stamp))
+        storage = StorageConfig(
+            snapshot_max_files=0,
+            snapshot_max_age_days=1,
+            snapshot_min_keep=2,
+            snapshot_grace_seconds=60,
+        )
+        result = prune_snapshots(folder, storage, now=now)
+        remaining = {path.name for path in folder.glob("*.png")}
+        check(
+            "Limpeza por idade remove as antigas",
+            result.removed == 7 and "pos_partida_9.png" not in remaining,
+            f"removidas={result.removed}, restantes={sorted(remaining)}",
+        )
+        check(
+            "Limpeza preserva somente as evidências do token",
+            {"token_banner_x.png", "tela_recompensa_x.png"} <= remaining
+            and "reward_item_x.png" not in remaining,
+        )
+        check(
+            "Limpeza preserva as capturas mais recentes",
+            {"pos_partida_0.png", "pos_partida_1.png"} <= remaining,
+        )
+
+    with tempfile.TemporaryDirectory() as temp:
+        folder = Path(temp)
+        now = time.time()
+        for index in range(12):
+            path = folder / f"pos_partida_{index}.png"
+            path.write_bytes(b"x")
+            stamp = now - (index + 1) * 30
+            os.utime(path, (stamp, stamp))
+        for name in ("token_banner_x.png", "reward_item_x.png", "tela_recompensa_x.png"):
+            path = folder / name
+            path.write_bytes(b"evidence")
+            stamp = now - 60
+            os.utime(path, (stamp, stamp))
+        storage = StorageConfig(
+            snapshot_max_files=3,
+            snapshot_max_age_days=0,
+            snapshot_min_keep=0,
+            snapshot_grace_seconds=0,
+        )
+        result = prune_snapshots(folder, storage, now=now)
+        remaining = list(folder.glob("*.png"))
+        evidence_names = [
+            "token_banner_x.png",
+            "tela_recompensa_x.png",
+        ]
+        check(
+            "Limpeza por quantidade respeita o máximo",
+            result.removed > 0 and len(remaining) <= 3,
+            f"removidas={result.removed}, restantes={len(remaining)}",
+        )
+        check(
+            "Evidências do token continuam após limpeza por quantidade",
+            all((folder / name).exists() for name in evidence_names)
+            and not (folder / "reward_item_x.png").exists(),
+        )
+
+    print()
+    print("Webhook:")
+    masked = mask_webhook_url(
+        "https://discord.com/api/webhooks/123456789/segredo-na-url"
+    )
+    check(
+        "URL do Discord é mascarada",
+        "segredo-na-url" not in masked and "discord.com" in masked,
+        masked,
+    )
+    discord = WebhookConfig(
+        enabled=True, url="https://discord.com/api/webhooks/1/abc"
+    )
+    message = WebhookMessage(
+        reward=TOKEN_NAME,
+        kind="token",
+        matches=2,
+        elapsed=90,
+        image_bytes=b"\x89PNG-fake",
+        filename="token.png",
+    )
+    body, content_type = build_payload(discord, message)
+    check(
+        "Payload do Discord leva anexo e nome",
+        b"payload_json" in body
+        and b"files[0]" in body
+        and TOKEN_NAME.encode("utf-8") in body
+        and b"\x89PNG-fake" in body,
+        content_type,
+    )
+    generic = WebhookConfig(enabled=True, url="http://127.0.0.1/hook")
+    body, _ = build_payload(generic, message)
+    check(
+        "Payload genérico leva nome e captura",
+        b'name="reward"' in body
+        and b'name="file"' in body
+        and TOKEN_NAME.encode("utf-8") in body
+        and b"\x89PNG-fake" in body,
+    )
+
+    captured: dict[str, bytes | str] = {}
+
+    class _WebhookHandler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:
+            length = int(self.headers.get("Content-Length", "0"))
+            captured["body"] = self.rfile.read(length)
+            captured["ctype"] = self.headers.get("Content-Type", "")
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, *_args) -> None:
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _WebhookHandler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    try:
+        port = server.server_address[1]
+        local = WebhookConfig(
+            enabled=True,
+            url=f"http://127.0.0.1:{port}/hook",
+            timeout_seconds=5,
+        )
+        local_message = WebhookMessage(
+            reward="Ferramenta Espirito",
+            kind="item",
+            matches=4,
+            elapsed=61,
+            image_bytes=b"fake-png",
+            filename="reward.png",
+        )
+        result = send_message(local, local_message, attempts=1)
+        check(
+            "Webhook local responde 204",
+            result.ok and result.status == 204,
+            result.detail,
+        )
+        check(
+            "Webhook local recebe nome e captura",
+            b"Ferramenta Espirito" in captured.get("body", b"")
+            and b"fake-png" in captured.get("body", b"")
+            and "multipart/form-data" in str(captured.get("ctype", "")),
+        )
+        test_result = send_test(local)
+        check(
+            "Teste do webhook envia sem captura",
+            test_result.ok and test_result.status == 204,
+            test_result.detail,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    print()
+    print("Configuração (novas seções):")
+    with tempfile.TemporaryDirectory() as temp:
+        config_path = Path(temp) / "config.json"
+        custom = load_config(config_path)
+        custom.storage.snapshot_max_files = 123
+        custom.storage.snapshot_max_age_days = 7
+        custom.webhook.enabled = True
+        custom.webhook.url = "https://example.com/hook"
+        custom.rewards.fallback_label = "Recompensa teste"
+        save_config(custom, config_path)
+        loaded = load_config(config_path)
+        check(
+            "Configuração preserva retenção",
+            loaded.storage.snapshot_max_files == 123
+            and loaded.storage.snapshot_max_age_days == 7,
+        )
+        check(
+            "Configuração preserva webhook",
+            loaded.webhook.enabled
+            and loaded.webhook.url == "https://example.com/hook",
+        )
+        check(
+            "Configuração preserva recompensas",
+            loaded.rewards.fallback_label == "Recompensa teste",
         )
 
     print()

@@ -30,6 +30,10 @@ e quais decisões guiam o comportamento do bot.
 | `piratebot/config.py` | Dataclasses, valores padrão e leitura/gravação do `config.json`. |
 | `piratebot/power.py` | Prevenção de suspensão do Windows em worker dedicado. |
 | `piratebot/hotkey.py` | Registro global do F8 via `RegisterHotKey`. |
+| `piratebot/rewards.py` | OCR do banner, parser de nomes (PT/EN/AR), deduplicação e brasão dourado. |
+| `piratebot/retention.py` | Limpeza de capturas por quantidade/idade, com proteção das evidências do token. |
+| `piratebot/webhook.py` | Fila em segundo plano e envio multipart para Discord ou endpoint genérico. |
+| `tools/instalar.ps1` | Instalação do Python/.venv/dependências e criação do atalho. |
 | `tools/check_postmatch.py` | Diagnóstico visual sem cliques para o resumo e o menu de pausa. |
 | `selftest.py` | Verificações offline e teste ao vivo opcional. |
 
@@ -95,8 +99,50 @@ para avançar telas.
 
 - token encontrado: procura **CLAIM ALL**, grava `TOKEN_ENCONTRADO.txt` e
   encerra após `auto_close_success_seconds`;
-- limite de partidas atingido: para sem token;
+- limite de partidas ou `max_runtime_minutes` atingido: para sem token;
 - caso contrário: volta para `LOBBY` e reenfileira.
+
+O limite de execução é conferido no início de cada ciclo do loop principal.
+Ao atingir o valor, o bot para de automatizar sem sair da partida à força e
+mostra o motivo no registro. O padrão é de 180 minutos; `0` desativa o limite,
+mas aumenta a exposição a bans por AFK.
+
+## Recompensas e webhook
+
+Em `MATCH` e `POSTMATCH`, cada varredura chama `RewardScanner.scan`:
+
+1. `banner_score` mede a faixa clara/dourada central (diagnóstico).
+2. `ChestPrecue` compara o dourado da região central com a captura anterior.
+   Um clarão forte reduz o intervalo de varredura por alguns segundos. O sinal
+   **não confirma o token**: baús e recompensas comuns também podem brilhar.
+3. O OCR do Windows lê a região central e devolve as linhas com a posição
+   horizontal.
+4. As linhas distantes do cabeçalho (`VOCÊ ENCONTROU`, `YOU FOUND`, `عثرت`) ou
+   do centro são descartadas; o parser junta nomes de duas ou três linhas e
+   remove quantidades/pontuação coladas pelo OCR no fim do nome.
+5. Se o texto não produzir um nome, `reward_badge_score` confere o brasão
+   dourado (faixa central + ícone emoldurado acima). Se ele existir, tenta um
+   segundo OCR com recorte fechado e, por fim, usa o rótulo genérico.
+6. `RewardGate` evita repetir a mesma recompensa em `cooldown_seconds` e o
+   token em `token_cooldown_seconds`.
+
+`_handle_reward` salva a captura, incrementa o contador, marca `token_found`
+quando o nome é o token e enfileira a mensagem no webhook. A imagem é
+codificada em PNG na memória antes do envio, então a limpeza de capturas não
+interfere em uploads em andamento. A fila e o worker do webhook vivem em
+`WebhookNotifier`; `reload_webhook` reinicia o worker quando a URL muda.
+
+## Limpeza de capturas
+
+`prune_snapshots` ordena as capturas por data e:
+
+- preserva `token_*` e `tela_recompensa_*` (evidências);
+- preserva as `snapshot_min_keep` mais recentes e arquivos dentro da carência;
+- remove por idade e, se ainda houver excesso, as mais antigas até
+  `snapshot_max_files`.
+
+A limpeza roda na inicialização, a cada `prune_interval_seconds` e no
+encerramento. Os banners `reward_*` são descartáveis; as capturas de token não.
 
 ## Preenchimentos (fills)
 
@@ -136,6 +182,7 @@ social) e o fallback `exit_icon.png`.
 | Worker do bot | `_run`: configuração, loop de estados e limpeza. |
 | `LogWatcher` | Lê o log incrementalmente e publica `LogEvent` na fila. |
 | Worker de energia | Mantém `SetThreadExecutionState` enquanto o bot ou o usuário pedirem. |
+| Worker do webhook | Consome a fila e envia capturas/nomes sem bloquear o loop do bot. |
 | Teste de detecção | Captura e análise sob demanda, sem bloquear a janela. |
 
 A UI nunca é alterada diretamente pelo worker: mensagens passam por
@@ -144,22 +191,29 @@ watcher; `manual_token` registra o token marcado pelo usuário.
 
 ## Configuração
 
-`config.json` é dividido em quatro blocos:
+`config.json` é dividido em sete blocos:
 
 - `game`: título da janela, caminho do log e resolução de referência;
 - `ui`: coordenadas de botões fixos (JOGAR, CONTINUAR, CLAIM ALL);
-- `detection`: limiares de template e validação de cor;
-- `behavior`: tempos, limites, simulação e modo segundo plano.
+- `detection`: limiares de template, validação de cor e faixa aceita para o
+  centro do token;
+- `behavior`: tempos, limites, simulação e modo segundo plano;
+- `rewards`: OCR, intervalo de varredura, cooldowns e fallback do brasão;
+- `storage`: limites e carência da limpeza de capturas;
+- `webhook`: ativação, URL, filtros e fila de envio.
 
 Coordenadas são sempre relativas a 1920×1080 e escaladas para o tamanho real
-do cliente do jogo. Alterações em `behavior` ou `detection` exigem reiniciar
-o app.
+do cliente do jogo. Alterações em `behavior`, `detection`, `rewards` ou
+`storage` exigem reiniciar o app. A URL do webhook pode ser alterada pela aba
+**Webhook** e é aplicada imediatamente.
 
 ## Testes e diagnóstico
 
 `selftest.py` cobre templates, imagens negativas, botões, pós-partida, menu,
-fills, parser do log, captura em segundo plano e prevenção de suspensão. O
-teste ao vivo (`--live`) só captura a tela; ele não clica nem rouba o foco.
+fills, parser do log, captura em segundo plano, prevenção de suspensão, OCR e
+parser de recompensas em três idiomas, brasão dourado, deduplicação, retenção
+de capturas, payloads de webhook e um envio HTTP local. O teste ao vivo
+(`--live`) só captura a tela; ele não clica nem rouba o foco.
 
 Para investigar uma falha visual, use:
 
@@ -173,6 +227,8 @@ template sem interagir com o jogo.
 ## Limitações conhecidas
 
 - Templates e coordenadas dependem da interface PT-BR em 1920×1080.
+- O OCR usa o idioma instalado no Windows; em árabe, sem o pacote de idioma, o
+  banner ainda é enviado pelo brasão, mas com o nome genérico.
 - O modo segundo plano exige janela sem borda e não minimizada.
 - A tela de recompensa e o CLAIM ALL podem variar entre eventos.
 - A primeira partida real e o caso de último sobrevivente devem ser

@@ -113,6 +113,15 @@ def imwrite_u(path: str | Path, image: np.ndarray) -> bool:
         return False
 
 
+def encode_png(image: np.ndarray) -> Optional[bytes]:
+    """Codifica a imagem em PNG para enviar ao webhook sem tocar no disco."""
+    try:
+        ok, buffer = cv2.imencode(".png", image)
+        return buffer.tobytes() if ok else None
+    except Exception:
+        return None
+
+
 def gold_ratio(bgr: np.ndarray) -> float:
     if bgr.size == 0:
         return 0.0
@@ -346,9 +355,22 @@ class TokenDetector:
                     )
                 )
 
-        valid.sort(key=lambda hit: -hit.score)
+        # O token aparece no centro-alto da tela, junto ao banner de recompensa.
+        # Texturas douradas do cenário (areia, skins, feixes) podem até gerar um
+        # match fraco, mas ficam nas bordas ou na parte de baixo da tela.
+        plausible: list[Hit] = []
+        for hit in valid:
+            center_x = (hit.x + hit.w / 2.0) / width
+            center_y = (hit.y + hit.h / 2.0) / height
+            if (
+                self.config.token_center_min_x <= center_x <= self.config.token_center_max_x
+                and center_y <= self.config.token_center_max_y
+            ):
+                plausible.append(hit)
+
+        plausible.sort(key=lambda hit: -hit.score)
         elapsed = (time.perf_counter() - started) * 1000.0
-        return Detection(bool(valid), valid, elapsed)
+        return Detection(bool(plausible), plausible, elapsed)
 
     def _find_button(
         self,

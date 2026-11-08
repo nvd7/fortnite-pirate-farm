@@ -3,3 +3,10 @@ numpy>=2.0
 mss>=10.0
 pydirectinput>=1.0.4
 pywin32>=306
+# OCR nativo do Windows para ler o nome das recompensas.
+winrt-runtime>=4.0
+winrt-Windows.Media.Ocr>=4.0
+winrt-Windows.Graphics.Imaging>=4.0
+winrt-Windows.Storage>=4.0
+winrt-Windows.Storage.Streams>=4.0
+winrt-Windows.Globalization>=4.0

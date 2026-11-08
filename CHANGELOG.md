@@ -4,6 +4,69 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto usa versionamento semântico.
 
+## [1.2.0] - 2026-11-08
+
+### Adicionado
+
+- Leitura do nome das recompensas com o **OCR nativo do Windows**, incluindo
+  cabeçalhos em português, inglês e árabe (`VOCÊ ENCONTROU`, `YOU FOUND`,
+  `لقد عثرت على`). O nome é normalizado e o token vira **Acesso à Loja Pirata**.
+- Aba **Webhook** na interface, com ativação, URL, filtros de token/outras
+  recompensas, envio opcional da captura, botão de teste e aplicação imediata
+  no farm em execução.
+- Envio de cada banner centralizado para Discord (payload nativo) ou para
+  qualquer endpoint `multipart/form-data`, com fila, deduplicação, timeout e
+  URL mascarada nos logs.
+- **Limpeza automática de capturas** por quantidade, idade e carência, com
+  estatísticas de disco, botões **Limpar agora**/**Abrir pasta** e proteção
+  permanente das evidências do token.
+- Instalação em um clique com **`Instalar.bat`** e `tools/instalar.ps1`: baixa
+  o Python 3.12 se necessário, cria a `.venv`, instala as dependências e cria o
+  atalho **Pirate Farm** na área de trabalho. `Iniciar.bat` e `Iniciar.vbs`
+  abrem o app sem console.
+- Abas **Farm** e **Webhook**, contador de recompensas, controles de retenção e
+  teste de OCR na tela.
+- Fallback visual por **brasão dourado central** (faixa + ícone acima), que
+  reconhece o banner mesmo sem OCR legível, inclusive em árabe.
+- **Precue de baú dourado:** um clarão central acelera a leitura de recompensas
+  por alguns segundos. O brilho não confirma o token; a confirmação continua
+  sendo feita pela moeda, pelo banner e pelo OCR.
+- **Limite de execução** editável na aba **Farm** (padrão de 180 minutos) e
+  aviso destacado quando o limite é desativado ou muito longo, reduzindo a
+  exposição a bans por AFK.
+- Autoteste ampliado para **123 verificações**, com OCR/parser em três idiomas,
+  brasão, precue de baú, deduplicação, retenção, payloads e envio HTTP local.
+
+### Corrigido
+
+- Falso “token encontrado” em texturas douradas do cenário: o detector agora
+  exige o acerto no centro-alto da tela e usa `inner_score_small=0.72`.
+- Falso positivo de recompensa em telas de carregamento, espectador e HUD: o
+  fallback genérico exige o par dourado do brasão, não apenas brilho/banner.
+- O OCR não mistura mais nomes de jogadores, kill feed e avisos laterais com o
+  nome da recompensa; nomes em duas ou três linhas são unidos corretamente.
+- Quantidades e pontuação coladas pelo OCR no fim do nome são removidas
+  (`Dispositivo Elemental 1.,` vira `Dispositivo Elemental`), preservando
+  números de modelo com dois dígitos.
+- O estado do token também é marcado quando o texto da recompensa é lido pelo
+  OCR, sem depender apenas do template visual.
+
+### Alterado
+
+- `config.json` ganhou os blocos `rewards`, `storage` e `webhook`, e o detector
+  passou a aceitar `token_center_min_x`, `token_center_max_x` e
+  `token_center_max_y`.
+- O padrão de `behavior.max_runtime_minutes` passou de `0` para `180`; a
+  interface permite alterar o limite e avisa quando ele fica em `0` ou acima de
+  4 horas.
+- A retenção protege apenas `token_*` e `tela_recompensa_*`; banners genéricos
+  `reward_*` e capturas de pós-partida podem ser removidos.
+- A documentação de instalação agora é voltada a usuários sem Python instalado.
+
+### Removido
+
+- `rewards.min_banner_score` e o fallback antigo por brilho genérico.
+
 ## [1.1.4] - 2026-11-06
 
 ### Corrigido
