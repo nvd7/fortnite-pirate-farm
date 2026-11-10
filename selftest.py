@@ -931,6 +931,25 @@ def main() -> int:
             else "imagem ausente"
         ),
     )
+    import cv2
+    import numpy as np
+
+    spectator_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    cv2.rectangle(spectator_frame, (180, 140), (1100, 680), (0, 180, 255), -1)
+    cv2.rectangle(spectator_frame, (500, 20), (800, 60), (0, 180, 255), -1)
+    check(
+        "Brasão ignora campo dourado de espectador",
+        reward_badge_score(spectator_frame) < config.rewards.fallback_banner_score,
+        f"score={reward_badge_score(spectator_frame):.2f}",
+    )
+    name_frame = np.zeros((720, 1280, 3), dtype=np.uint8)
+    cv2.rectangle(name_frame, (540, 280), (740, 350), (0, 180, 255), -1)
+    cv2.rectangle(name_frame, (550, 220), (730, 250), (0, 180, 255), -1)
+    check(
+        "Brasão ignora nome dourado largo acima da faixa",
+        reward_badge_score(name_frame) < config.rewards.fallback_banner_score,
+        f"score={reward_badge_score(name_frame):.2f}",
+    )
     if gameplay_image is not None:
         check(
             "Gameplay normal não atinge o fallback visual",
@@ -972,9 +991,6 @@ def main() -> int:
             "Precue não dispara em imagem estática",
             not precue.update(gameplay_image, now=2.0),
         )
-
-    import cv2
-    import numpy as np
 
     precue = ChestPrecue(RewardConfig())
     dark = np.zeros((720, 1280, 3), dtype=np.uint8)

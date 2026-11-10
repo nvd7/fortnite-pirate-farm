@@ -463,11 +463,13 @@ def reward_badge_score(frame: np.ndarray) -> float:
         return 0.0
 
     # Faixa/asa dourada: larga, centralizada e com preenchimento razoável.
+    # Os limites superiores evitam que um cenário dourado inteiro (porta,
+    # areia, HUD de espectador) seja confundido com a faixa do banner.
     ribbons = [
         item
         for item in components
-        if item[3] >= roi_w * 0.12
-        and item[4] >= roi_h * 0.12
+        if roi_w * 0.12 <= item[3] <= roi_w * 0.60
+        and roi_h * 0.12 <= item[4] <= roi_h * 0.60
         and 1.3 <= item[3] / float(item[4]) <= 4.0
         and item[7] >= 0.30
         and 0.40 <= item[5] <= 0.60
@@ -494,6 +496,10 @@ def reward_badge_score(frame: np.ndarray) -> float:
         icon_w = icon_x1 - icon_x0
         icon_h = icon_y1 - icon_y0
         if icon_w < roi_w * 0.05 or icon_h < roi_h * 0.07:
+            continue
+        # O ícone do brasão é emoldurado e aproximadamente quadrado. Nomes de
+        # jogador e títulos do HUD formam faixas largas e não devem passar.
+        if not (0.55 <= icon_w / float(icon_h) <= 1.90):
             continue
         icon_fill = sum(item[0] for item in above) / float(icon_w * icon_h)
         if icon_fill < 0.30:

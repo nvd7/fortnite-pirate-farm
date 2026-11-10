@@ -13,7 +13,7 @@
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="#requisitos"><img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white" alt="Windows 10/11"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licen%C3%A7a-MIT-34d399" alt="Licença MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.2.0-f5c451" alt="Versão 1.2.0"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.2.1-f5c451" alt="Versão 1.2.1"></a>
   <a href="https://github.com/nvd7/fortnite-pirate-farm/actions/workflows/tests.yml"><img src="https://github.com/nvd7/fortnite-pirate-farm/actions/workflows/tests.yml/badge.svg" alt="Testes"></a>
   <img src="https://img.shields.io/badge/idioma-PT--BR-0b1220" alt="Português do Brasil">
 </p>
@@ -40,9 +40,10 @@
 > 180 minutos) e não tente burlar a detecção de AFK.
 
 > [!IMPORTANT]
-> **Status:** v1.2.0 - identificação do nome das recompensas por OCR, envio
+> **Status:** v1.2.1 - identificação do nome das recompensas por OCR, envio
 > opcional de cada banner para um webhook, limpeza automática de capturas,
-> instalação em um clique e interface com abas **Farm** e **Webhook**. O
+> instalação em um clique e interface com abas **Farm** e **Webhook**. Esta
+> versão corrige falsos positivos do fallback visual em telas de espectador. O
 > primeiro farm com partidas reais deve ser supervisionado, porque telas de
 > recompensa e mudanças de layout do Fortnite podem exigir calibração.
 

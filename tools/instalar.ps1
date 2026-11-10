@@ -127,7 +127,7 @@ function Install-Python {
 }
 
 Write-Host ""
-Write-Host "  Pirate Farm 1.2.0 - instalador" -ForegroundColor Yellow
+Write-Host "  Pirate Farm 1.2.1 - instalador" -ForegroundColor Yellow
 Write-Host "  Pasta: $Root"
 Write-Host ""
 

@@ -4,6 +4,18 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto usa versionamento semântico.
 
+## [1.2.1] - 2026-11-09
+
+### Corrigido
+
+- Falso positivo do fallback visual em telas de espectador: cenários dourados
+  (porta, areia) e nomes de jogador no topo eram confundidos com o brasão de
+  recompensa. Agora a faixa precisa ter tamanho compatível com o banner e o
+  ícone acima dela deve ser aproximadamente quadrado. As capturas reais de
+  espectador passaram a ser ignoradas, enquanto o banner verdadeiro continua
+  sendo reconhecido.
+- Autoteste ganhou dois casos sintéticos para impedir a regressão (125 testes).
+
 ## [1.2.0] - 2026-11-08
 
 ### Adicionado

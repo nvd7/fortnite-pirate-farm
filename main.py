@@ -48,7 +48,7 @@ from piratebot.vision import (
 from piratebot.webhook import mask_webhook_url, send_test, validate_webhook_url
 
 APP_TITLE = "Pirate Farm — Fortnite"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 
 # Paleta do modo escuro.
 BG = "#0a0f18"
