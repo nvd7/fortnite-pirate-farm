@@ -185,6 +185,10 @@ class BehaviorConfig:
     max_matches: int = 0
     # Limite padrão de 3 h para reduzir exposição a bans por AFK. 0 = sem limite.
     max_runtime_minutes: int = 180
+    # Para o farm quando o teclado/mouse ficam sem uso. 0 = desativado.
+    idle_stop_minutes: int = 30
+    # Encerra a sessão se o jogo exibir um aviso explícito de AFK/inatividade.
+    stop_on_afk_warning: bool = True
     auto_close_success_seconds: int = 30
     dry_run: bool = False
     background_mode: bool = True

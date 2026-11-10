@@ -48,7 +48,7 @@ from piratebot.vision import (
 from piratebot.webhook import mask_webhook_url, send_test, validate_webhook_url
 
 APP_TITLE = "Pirate Farm — Fortnite"
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.3.0"
 
 # Paleta do modo escuro.
 BG = "#0a0f18"
@@ -403,6 +403,102 @@ class PirateFarmApp:
             bg=BG,
         )
         self.power_label.pack(side="right", padx=(0, 10))
+
+        # ---------------------------------------------------- proteção de sessão
+        safety_card = tk.Frame(
+            self._tabs["farm"],
+            bg=CARD,
+            highlightbackground=CARD_BORDER,
+            highlightthickness=1,
+            padx=16,
+            pady=10,
+        )
+        safety_card.pack(fill="x", pady=(0, 10))
+        safety_head = tk.Frame(safety_card, bg=CARD)
+        safety_head.pack(fill="x")
+        tk.Label(
+            safety_head,
+            text="PROTEÇÃO DE SESSÃO",
+            font=("Segoe UI", 9, "bold"),
+            fg=MUTED,
+            bg=CARD,
+        ).pack(side="left")
+        tk.Label(
+            safety_head,
+            text="sem simular movimento ou presença",
+            font=("Segoe UI", 8),
+            fg=DIM,
+            bg=CARD,
+        ).pack(side="right")
+
+        safety_row = tk.Frame(safety_card, bg=CARD)
+        safety_row.pack(fill="x", pady=(7, 0))
+        self.idle_var = tk.BooleanVar(
+            value=self.config.behavior.idle_stop_minutes > 0
+        )
+        self.afk_var = tk.BooleanVar(
+            value=self.config.behavior.stop_on_afk_warning
+        )
+        self.idle_minutes_var = tk.StringVar(
+            value=str(self.config.behavior.idle_stop_minutes or 30)
+        )
+        self.idle_chip = self._chip(
+            safety_row,
+            "Parar sem atividade",
+            self.idle_var,
+            command=self._refresh_safety_controls,
+        )
+        self.idle_chip.pack(side="left")
+        idle_box = tk.Frame(safety_row, bg=CARD)
+        idle_box.pack(side="left", padx=(8, 0))
+        tk.Label(
+            idle_box,
+            text="min",
+            font=("Segoe UI", 8),
+            fg=MUTED,
+            bg=CARD,
+        ).pack(side="left", padx=(0, 4))
+        self.idle_spin = tk.Spinbox(
+            idle_box,
+            textvariable=self.idle_minutes_var,
+            from_=5,
+            to=720,
+            width=4,
+            font=("Segoe UI", 9),
+            bg="#0a1422",
+            fg=TEXT,
+            buttonbackground=SUBTLE,
+            insertbackground=TEXT,
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=CARD_BORDER,
+            highlightcolor=GOLD,
+            justify="center",
+        )
+        self.idle_spin.pack(side="left")
+        self.afk_chip = self._chip(
+            safety_row,
+            "Parar em aviso de AFK",
+            self.afk_var,
+            command=self._update_mode_hint,
+        )
+        self.afk_chip.pack(side="left", padx=(16, 0))
+        tk.Label(
+            safety_card,
+            text=(
+                "O farm para quando o teclado/mouse ficam parados, quando o "
+                "Windows bloqueia ou quando o jogo mostra “AINDA ESTÁ AÍ?”/aviso "
+                "de inatividade. O app não clica em CONTINUAR JOGANDO nesses casos."
+            ),
+            font=("Segoe UI", 8),
+            fg=DIM,
+            bg=CARD,
+            anchor="w",
+            justify="left",
+            wraplength=800,
+        ).pack(fill="x", pady=(6, 0))
+        self._refresh_safety_controls()
 
         # ------------------------------------------------------------- tools
         tools = tk.Frame(self._tabs["farm"], bg=BG)
@@ -1024,6 +1120,14 @@ class PirateFarmApp:
                 fg=AMBER,
             )
 
+    def _refresh_safety_controls(self) -> None:
+        if not hasattr(self, "idle_spin"):
+            return
+        self.idle_spin.config(
+            state="normal" if self.idle_var.get() else "disabled"
+        )
+        self._update_mode_hint()
+
     def _update_mode_hint(self) -> None:
         if not hasattr(self, "mode_hint"):
             return
@@ -1039,9 +1143,15 @@ class PirateFarmApp:
             card_bg, border, foreground = "#2a2110", "#713f12", "#fde68a"
             text = (
                 "Modo primeiro plano: deixe o Fortnite na frente e não use o PC "
-                "durante o farm. Se o jogo perder o foco, o bot tenta clicar em "
-                "CONTINUAR JOGANDO."
+                "durante o farm."
             )
+            if getattr(self, "afk_var", None) is not None and self.afk_var.get():
+                text += (
+                    " Se o jogo mostrar “AINDA ESTÁ AÍ?”, o farm para por "
+                    "segurança em vez de clicar em CONTINUAR JOGANDO."
+                )
+            else:
+                text += " Se o jogo perder o foco, o bot tenta clicar em CONTINUAR JOGANDO."
         try:
             limit = int(self.runtime_var.get())
         except (TypeError, ValueError):
@@ -1053,6 +1163,17 @@ class PirateFarmApp:
             )
         else:
             text += f" Limite de execução: {limit} min."
+        if getattr(self, "idle_var", None) is not None:
+            if self.idle_var.get():
+                try:
+                    idle_limit = int(self.idle_minutes_var.get())
+                except (TypeError, ValueError):
+                    idle_limit = self.config.behavior.idle_stop_minutes or 30
+                text += (
+                    f" Para após {idle_limit} min sem teclado/mouse."
+                )
+            else:
+                text += " Proteção de inatividade desativada."
         self.mode_hint_card.config(bg=card_bg, highlightbackground=border)
         self.mode_hint.config(text=text, bg=card_bg, fg=foreground)
 
@@ -1266,6 +1387,8 @@ class PirateFarmApp:
             return
         if not self._apply_runtime_field():
             return
+        if not self._apply_safety_fields():
+            return
         self.config.behavior.dry_run = bool(self.sim_var.get())
         self.config.behavior.background_mode = bool(self.bg_var.get())
         try:
@@ -1284,6 +1407,32 @@ class PirateFarmApp:
             self._log(
                 f"Aviso: limite de {limit} min é longo. Sessões acima de 4 h "
                 "aumentam o risco de ban por AFK.",
+                "warn",
+            )
+
+        idle_limit = self.config.behavior.idle_stop_minutes
+        if idle_limit > 0:
+            self._log(
+                f"Proteção de presença: o farm para após {idle_limit} min sem "
+                "teclado/mouse.",
+                "success",
+            )
+        else:
+            self._log(
+                "Proteção de inatividade desativada. O farm pode continuar sem "
+                "ninguém por perto e aumentar o risco de ban.",
+                "warn",
+            )
+        if self.config.behavior.stop_on_afk_warning:
+            self._log(
+                "Aviso de AFK: o farm para em “AINDA ESTÁ AÍ?” ou aviso de "
+                "inatividade, sem clicar em continuar.",
+                "success",
+            )
+        else:
+            self._log(
+                "Parada por aviso de AFK desativada: o bot voltará a clicar em "
+                "CONTINUAR JOGANDO. Isso aumenta o risco de ban.",
                 "warn",
             )
 
@@ -1396,6 +1545,30 @@ class PirateFarmApp:
             os.startfile(str(folder))
         except Exception as exc:
             self._log(f"Não consegui abrir a pasta de capturas: {exc}", "error")
+
+    def _apply_safety_fields(self) -> bool:
+        if self.idle_var.get():
+            try:
+                minutes = int(self.idle_minutes_var.get())
+            except (TypeError, ValueError):
+                self._dialog(
+                    "Proteção de sessão",
+                    "Informe quantos minutos sem teclado/mouse devem encerrar "
+                    "o farm, usando apenas números inteiros (5 a 720).",
+                )
+                return False
+            if not 5 <= minutes <= 720:
+                self._dialog(
+                    "Proteção de sessão",
+                    "Use um limite entre 5 e 720 minutos sem atividade.",
+                )
+                return False
+            self.config.behavior.idle_stop_minutes = minutes
+            self.idle_minutes_var.set(str(minutes))
+        else:
+            self.config.behavior.idle_stop_minutes = 0
+        self.config.behavior.stop_on_afk_warning = bool(self.afk_var.get())
+        return True
 
     def _apply_runtime_field(self) -> bool:
         try:

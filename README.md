@@ -13,7 +13,7 @@
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
   <a href="#requisitos"><img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?logo=windows&logoColor=white" alt="Windows 10/11"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licen%C3%A7a-MIT-34d399" alt="Licença MIT"></a>
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.2.1-f5c451" alt="Versão 1.2.1"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/vers%C3%A3o-1.3.0-f5c451" alt="Versão 1.3.0"></a>
   <a href="https://github.com/nvd7/fortnite-pirate-farm/actions/workflows/tests.yml"><img src="https://github.com/nvd7/fortnite-pirate-farm/actions/workflows/tests.yml/badge.svg" alt="Testes"></a>
   <img src="https://img.shields.io/badge/idioma-PT--BR-0b1220" alt="Português do Brasil">
 </p>
@@ -37,15 +37,17 @@
 > aceita o risco de perder. O programa não injeta código no jogo: ele lê o log
 > local, captura a tela e envia cliques/teclas como um usuário. Deixar o farm
 > AFK por horas aumenta o risco de ban; use o **limite de execução** (padrão de
-> 180 minutos) e não tente burlar a detecção de AFK.
+> 180 minutos) e não tente burlar a detecção de AFK. O app também para após
+> **30 minutos sem teclado/mouse** e encerra ao detectar **“AINDA ESTÁ AÍ?”** ou
+> avisos de inatividade, sem clicar em **CONTINUAR JOGANDO**.
 
 > [!IMPORTANT]
-> **Status:** v1.2.1 - identificação do nome das recompensas por OCR, envio
-> opcional de cada banner para um webhook, limpeza automática de capturas,
-> instalação em um clique e interface com abas **Farm** e **Webhook**. Esta
-> versão corrige falsos positivos do fallback visual em telas de espectador. O
-> primeiro farm com partidas reais deve ser supervisionado, porque telas de
-> recompensa e mudanças de layout do Fortnite podem exigir calibração.
+> **Status:** v1.3.0 - proteção de presença e parada segura em avisos de AFK,
+> identificação do nome das recompensas por OCR, envio opcional de cada banner
+> para um webhook, limpeza automática de capturas, instalação em um clique e
+> interface com abas **Farm** e **Webhook**. O primeiro farm com partidas reais
+> deve ser supervisionado, porque telas de recompensa e mudanças de layout do
+> Fortnite podem exigir calibração.
 
 ---
 
@@ -70,9 +72,16 @@ O ciclo é automático:
    recompensa com **CLAIM ALL** (se a tela aparecer) e encerra.
 
 A automação é **híbrida**: o `FortniteGame.log` informa em que fase o jogo está;
-a visão computacional confirma o botão **JOGAR**, a tela de suspensão, o token e
+a visão computacional confirma o botão **JOGAR**, a tela de presença, o token e
 o botão **CLAIM ALL**. Nada é enviado para a internet por padrão; o webhook de
 recompensas é opcional e só funciona quando você configura uma URL.
+
+> [!WARNING]
+> O app **não simula movimento, teclas ou presença** para contornar a detecção
+> de AFK. Quando o jogo pergunta **“AINDA ESTÁ AÍ?”** ou mostra um aviso de
+> inatividade, ele encerra a sessão. Essa é uma decisão de segurança, não uma
+> falha: continuar clicando em **CONTINUAR JOGANDO** é exatamente o tipo de
+> evasão que pode agravar uma punição.
 
 ---
 
@@ -95,10 +104,11 @@ recompensas é opcional e só funciona quando você configura uma URL.
   **Voltar ao Lobby**. A saída é cancelada se algum preenchimento voltar e nunca
   acontece com o token encontrado.
 - **CLAIM ALL automático** na tela de recompensa do token.
-- **Tela de suspensão do Fortnite:** detecta “O FORTNITE ESTÁ NO MODO DE
-  SUSPENSÃO” e clica em **CONTINUAR JOGANDO**.
+- **Proteção de presença:** para após **30 minutos** sem teclado/mouse, para se a
+  sessão do Windows for bloqueada e encerra ao detectar **“AINDA ESTÁ AÍ?”** ou
+  um aviso de AFK/inatividade. O padrão é **não clicar em CONTINUAR JOGANDO**.
 - **Prevenção de suspensão do Windows:** botão **Manter PC acordado** e proteção
-  automática enquanto o bot roda.
+  automática enquanto o bot roda. Bloquear o Windows manualmente encerra o farm.
 - **Interface escura em PT-BR**, com status, contadores, log ao vivo e atalho
   global **F8** para parada de emergência.
 - **Modo simulação:** acompanha o log e testa a detecção sem clicar no jogo.
@@ -133,8 +143,9 @@ recompensas é opcional e só funciona quando você configura uma URL.
 > [!TIP]
 > Para o modo segundo plano ficar fluido, desative nas configurações do Fortnite
 > a opção que **suspende o jogo quando ele perde o foco**, se ela existir na sua
-> versão. O bot até clica em **CONTINUAR JOGANDO**, mas o jogo suspenso deixa de
-> renderizar e a detecção fica mais lenta.
+> versão. Por padrão, se a tela **“AINDA ESTÁ AÍ?”** aparecer, o farm para por
+> segurança em vez de clicar em **CONTINUAR JOGANDO**. Mantenha o jogo em janela
+> sem borda e não minimize.
 
 ---
 
@@ -335,6 +346,8 @@ relativas a **1920×1080** e escaladas para o tamanho real da janela.
 | `behavior.scan_interval_match` | `1.6` | Intervalo (s) entre verificações do token na partida |
 | `behavior.max_matches` | `0` | Máximo de partidas; `0` = sem limite |
 | `behavior.max_runtime_minutes` | `180` | Tempo máximo em minutos; `0` = sem limite (maior risco de ban) |
+| `behavior.idle_stop_minutes` | `30` | Para após esse tempo sem teclado/mouse; `0` desativa |
+| `behavior.stop_on_afk_warning` | `true` | Para em **“AINDA ESTÁ AÍ?”**/aviso de AFK em vez de clicar em continuar |
 | `behavior.auto_close_success_seconds` | `30` | Segundos até fechar após achar o token; `0` = não fecha |
 | `behavior.claim_timeout` | `20.0` | Tempo (s) procurando a tela de recompensa |
 | `behavior.matchmaking_timeout` | `240.0` | Tempo (s) esperando a partida começar |
@@ -385,7 +398,9 @@ relativas a **1920×1080** e escaladas para o tamanho real da janela.
 > [!TIP]
 > Para testar com poucas partidas, use `max_matches: 2`. O campo **Limite
 > (min)** na aba **Farm** também salva `max_runtime_minutes` (padrão `180`).
-> Sessões acima de 4 horas aumentam bastante o risco de ban por AFK.
+> A caixa **Proteção de sessão** controla `idle_stop_minutes` e
+> `stop_on_afk_warning`. Sessões acima de 4 horas aumentam bastante o risco de
+> ban por AFK, mesmo com as proteções ativas.
 
 ---
 
@@ -516,6 +531,7 @@ fortnite_pirate_farm/
 │   ├── hotkey.py               # atalho global F8
 │   ├── logwatcher.py           # leitura incremental do log
 │   ├── power.py                # prevenção de suspensão do Windows
+│   ├── presence.py             # inatividade e bloqueio da sessão do Windows
 │   ├── retention.py            # limpeza automática das capturas
 │   ├── rewards.py              # OCR, parser e brasão das recompensas
 │   ├── squad.py                # rastreamento dos preenchimentos
@@ -561,11 +577,12 @@ fortnite_pirate_farm/
 | **“Falha na captura em segundo plano”** | Confirme que o jogo não está minimizado, desative tela cheia exclusiva e a suspensão do Fortnite. Teste **Testar detecção agora**. |
 | **O bot não clica em JOGAR** | Use **Testar detecção agora** e veja `logs\teste_tela.png`. Confirme o lobby, o modo Battle Royale e o Squad + Fill. |
 | **Token não detectado** | Veja as capturas em `logs\snapshots\`. Atualizações do jogo podem mudar a arte; siga o [guia de calibragem](docs/CALIBRAGEM.md) para recapturar o template. |
-| **O jogo entra em suspensão** | O bot tenta **CONTINUAR JOGANDO**, mas o ideal é desativar a suspensão nas configurações do Fortnite e manter a janela sem borda. |
-| **O PC dorme ou a tela bloqueia** | Ative **Manter PC acordado** e desative a suspensão/bloqueio automático no Windows. `Win+L` manual não é impedido. |
+| **O jogo mostra “AINDA ESTÁ AÍ?”** | Por padrão o farm **para por segurança** e não clica em **CONTINUAR JOGANDO**. Desative a suspensão do Fortnite nas configurações e mantenha a janela sem borda. Clicar em continuar é evasão de presença e aumenta o risco de ban. |
+| **O PC dorme ou a tela bloqueia** | Ative **Manter PC acordado** e desative a suspensão/bloqueio automático no Windows. Se a sessão for bloqueada, o farm para em vez de continuar sem ninguém. |
 | **A tela de pós-partida não avança** | Confira as capturas `logs\snapshots\pos_partida_*.png`. Ajuste `postmatch_click_after`/`postmatch_click_retry` e, se o resumo não tiver botões, `postmatch_menu_after`. |
 | **O bot para sozinho após algumas horas** | É o limite de execução (padrão `180` min). Ajuste **Limite (min)** na aba **Farm** ou `behavior.max_runtime_minutes`; `0` desativa o limite, mas aumenta o risco de ban por AFK. |
-| **Recebi ban por AFK** | O limite de execução reduz a exposição, mas não elimina o risco. Não use movimento automático para burlar a detecção; prefira sessões curtas e supervisionadas. |
+| **“Sem atividade de teclado/mouse”** | É a proteção de presença (padrão `30` min). Mexa no teclado/mouse ou ajuste **Parar sem atividade** na aba **Farm**. Desativar essa proteção permite farmar sem ninguém por perto e aumenta o risco. |
+| **Recebi ban por AFK** | O limite de execução e as proteções de presença reduzem a exposição, mas não eliminam o risco. Não use movimento automático para burlar a detecção; prefira sessões curtas e supervisionadas. |
 | **Não sei qual botão o resumo exibe** | Rode `tools\check_postmatch.py` e veja a confiança de cada template. O diagnóstico não clica no jogo. |
 | **Falso positivo de token** | Guarde a captura de `logs\snapshots\` e abra uma issue; não aumente o limiar sem testar as imagens negativas. O detector já exige o token no centro-alto da tela. |
 | **Webhook não envia** | Confira **Webhook ativado**, a URL e use **Testar webhook**. Erros de rede aparecem no registro; a URL é mascarada. |
@@ -589,7 +606,9 @@ fortnite_pirate_farm/
 - **Atualizações do Fortnite podem quebrar a detecção.** O projeto é
   experimental e não tem vínculo com a Epic Games.
 - **Risco de conta:** automação pode violar os Termos de Serviço. Você é
-  responsável pelo uso e por qualquer consequência na sua conta.
+  responsável pelo uso e por qualquer consequência na sua conta. O app não
+  implementa movimento/check-in automático para burlar AFK; ele **para** quando
+  detecta ausência de presença ou um aviso de inatividade.
 - **Sem garantias.** O software é fornecido sob a licença MIT, sem garantia de
   funcionamento ou de obtenção do token.
 

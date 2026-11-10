@@ -90,6 +90,8 @@
     "squad_leave_max_attempts": 3,
     "max_matches": 0,
     "max_runtime_minutes": 180,
+    "idle_stop_minutes": 30,
+    "stop_on_afk_warning": true,
     "auto_close_success_seconds": 30,
     "dry_run": false,
     "background_mode": true

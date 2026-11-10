@@ -9,7 +9,7 @@ import traceback
 from enum import StrEnum
 from typing import Optional
 
-from . import power
+from . import power, presence
 from .config import ASSETS, LOGS, AppConfig
 from .controller import GameController
 from .logwatcher import STATE_LABELS, STATE_LOBBY, STATE_LOGIN, STATE_MATCH, LogEvent, LogWatcher
@@ -128,6 +128,8 @@ class PirateBot:
         self._last_play_click = 0.0
         self._last_match_report = 0.0
         self._last_capture_error = 0.0
+        self._last_presence_check = 0.0
+        self._idle_warned = False
         self._last_visual_lobby_check = 0.0
         self._last_postmatch_snapshot_at = 0.0
         self._postmatch_snapshots = 0
@@ -246,9 +248,13 @@ class PirateBot:
             )
 
     def _main_loop(self) -> None:
+        if self.stop_event.is_set():
+            return
         self._emit_status()
         time.sleep(0.4)
         self._drain_events()
+        if self.stop_event.is_set():
+            return
 
         if self.phase == Phase.STARTING:
             if self._last_state == STATE_LOBBY:
@@ -280,6 +286,9 @@ class PirateBot:
                         "(0 = sem limite) e inicie novamente."
                     )
                     break
+
+            if self._check_presence(now):
+                break
 
             if self.phase == Phase.STARTING:
                 self._do_starting(now)
@@ -584,6 +593,8 @@ class PirateBot:
         # entre em outra partida: resgate e encerre.
         if not self.token_found:
             frame = self._capture("lobby", log_errors=False)
+            if frame is not None and self._check_afk_warning(frame, now):
+                return
             if frame is not None and self._detector is not None:
                 detection = self._detector.detect(frame)
                 if detection.found and detection.best is not None:
@@ -631,6 +642,8 @@ class PirateBot:
 
         background = self.config.behavior.background_mode
         if self._resume_if_suspended(force_focus=not background):
+            if self.stop_event.is_set():
+                return
             time.sleep(0.8)
 
         if not background:
@@ -641,6 +654,8 @@ class PirateBot:
 
         time.sleep(0.1 if background else 0.4)
         frame = self._capture("lobby")
+        if frame is not None and self._check_afk_warning(frame):
+            return
         hit = self._detector.find_play_button(frame) if frame is not None else None
 
         if hit is None:
@@ -651,6 +666,8 @@ class PirateBot:
             self._controller.click_ref(*self.config.ui.play_tab)
             time.sleep(1.2)
             frame = self._capture("lobby")
+            if frame is not None and self._check_afk_warning(frame):
+                return
             hit = self._detector.find_play_button(frame) if frame is not None else None
 
         if hit is not None:
@@ -1098,10 +1115,15 @@ class PirateBot:
             if frame is not None and not self.token_found:
                 self._note_chest_precue(frame, now)
             if frame is not None and self._detector is not None:
+                if self._check_afk_warning(frame, now):
+                    return
                 self._suspend_counter += 1
                 if self._suspend_counter % 3 == 0:
                     suspend_hit = self._detector.find_suspend_button(frame)
                     if suspend_hit is not None:
+                        if self.config.behavior.stop_on_afk_warning:
+                            self._stop_on_suspend_prompt(frame, "durante a partida")
+                            return
                         self._emit_log(
                             "Tela de suspensão na partida. Clicando em CONTINUAR JOGANDO.",
                             "warn",
@@ -1196,10 +1218,15 @@ class PirateBot:
             if frame is not None and not self.token_found:
                 self._note_chest_precue(frame, now)
             if frame is not None and self._detector is not None:
+                if self._check_afk_warning(frame, now):
+                    return
                 self._suspend_counter += 1
                 if self._suspend_counter % 4 == 0:
                     suspend_hit = self._detector.find_suspend_button(frame)
                     if suspend_hit is not None:
+                        if self.config.behavior.stop_on_afk_warning:
+                            self._stop_on_suspend_prompt(frame, "no pós-partida")
+                            return
                         self._emit_log(
                             "Tela de suspensão no pós-partida. Clicando em CONTINUAR JOGANDO.",
                             "warn",
@@ -1275,7 +1302,11 @@ class PirateBot:
 
         if frame is None:
             frame = self._capture("pós-partida", log_errors=False)
-        if frame is None or self._detector is None:
+        if frame is None:
+            return
+        if self._check_afk_warning(frame, now):
+            return
+        if self._detector is None:
             return
 
         # A tela pode ter mudado desde a última varredura; confira o token
@@ -1503,6 +1534,110 @@ class PirateBot:
         )
         self.stop_event.set()
 
+    def _check_presence(self, now: float) -> bool:
+        """Encerra a sessão quando ninguém está por perto.
+
+        A checagem é deliberadamente conservadora: não simula movimento nem
+        cliques para enganar a detecção do jogo. Se o Windows estiver
+        bloqueado ou o teclado/mouse ficarem parados além do limite, o farm
+        para e registra o resumo da sessão.
+        """
+        idle_limit = int(self.config.behavior.idle_stop_minutes)
+        if idle_limit <= 0 and not self.config.behavior.stop_on_afk_warning:
+            return False
+        if now - self._last_presence_check < 10.0:
+            return False
+        self._last_presence_check = now
+
+        try:
+            if presence.session_locked():
+                self._safety_stop(
+                    "Sessão do Windows bloqueada. O farm parou por segurança; "
+                    "desbloqueie o PC e inicie novamente."
+                )
+                return True
+        except Exception as exc:
+            self._emit_log(f"Falha ao verificar o bloqueio do Windows: {exc}", "debug")
+
+        if idle_limit <= 0:
+            return False
+        try:
+            idle = presence.idle_seconds()
+        except Exception as exc:
+            self._emit_log(f"Falha ao verificar a inatividade: {exc}", "debug")
+            return False
+
+        if presence.idle_limit_reached(idle, idle_limit):
+            minutes = max(1, int(round(idle / 60.0)))
+            self._safety_stop(
+                f"Sem atividade de teclado/mouse há {minutes} min "
+                f"(limite: {idle_limit} min). O farm parou por segurança; "
+                "toque no PC e inicie novamente."
+            )
+            return True
+
+        half = idle_limit * 30.0
+        if idle >= half and not self._idle_warned:
+            self._idle_warned = True
+            remaining = max(0, int((idle_limit * 60.0 - idle) / 60.0))
+            self._emit_log(
+                f"Sem teclado/mouse há {idle / 60.0:.0f} min. "
+                f"O farm para em cerca de {remaining} min sem atividade.",
+                "warn",
+            )
+        elif idle < half:
+            self._idle_warned = False
+        return False
+
+    def _check_afk_warning(self, frame, now: Optional[float] = None) -> bool:
+        """Encerra a sessão se o jogo exibir um aviso de AFK/inatividade."""
+        if (
+            frame is None
+            or self._rewards is None
+            or not self.config.behavior.stop_on_afk_warning
+        ):
+            return False
+        if self.stop_event.is_set():
+            return True
+        try:
+            text = self._rewards.check_afk_warning(frame, now=now)
+        except Exception as exc:
+            self._emit_log(f"Falha ao verificar aviso de AFK: {exc}", "debug")
+            return False
+        if not text:
+            return False
+        self._save_snapshot(frame, "aviso_afk")
+        raw = " ".join(str(text).split())[:180]
+        self._emit_log(f"Texto do aviso de AFK: {raw}", "warn")
+        self._safety_stop(
+            "Aviso de AFK/inatividade detectado no jogo. O farm parou por "
+            "segurança e não tentou continuar a partida."
+        )
+        return True
+
+    def _stop_on_suspend_prompt(self, frame, context: str) -> None:
+        """Para ao ver "AINDA ESTÁ AÍ?" em vez de simular presença."""
+        self._save_snapshot(frame, "presenca")
+        self._safety_stop(
+            f"Tela de presença ('AINDA ESTÁ AÍ?') detectada {context}. "
+            "O farm parou por segurança e não clicou em CONTINUAR JOGANDO."
+        )
+
+    def _session_summary(self) -> str:
+        elapsed = max(0, int(time.time() - self.started_at))
+        hours, remainder = divmod(elapsed, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        return (
+            f"{hours:02d}:{minutes:02d}:{seconds:02d} de execução, "
+            f"{self.matches} partida(s), {self._rewards_detected} recompensa(s)"
+        )
+
+    def _safety_stop(self, reason: str) -> None:
+        if self.stop_event.is_set():
+            return
+        self._emit_log(f"Resumo da sessão: {self._session_summary()}.", "info")
+        self._stop_with_message(reason)
+
     def _stop_with_message(self, message: str) -> None:
         self.phase = Phase.STOPPED
         self.message = message
@@ -1726,9 +1861,14 @@ class PirateBot:
                 frame = self._grabber.capture()
             except ScreenCaptureError:
                 return False
+        if self._check_afk_warning(frame):
+            return True
         hit = self._detector.find_suspend_button(frame)
         if hit is None:
             return False
+        if self.config.behavior.stop_on_afk_warning:
+            self._stop_on_suspend_prompt(frame, "na tela atual")
+            return True
         self._emit_log(
             "Tela de suspensão detectada. Clicando em CONTINUAR JOGANDO.",
             "warn",

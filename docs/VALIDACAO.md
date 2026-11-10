@@ -18,8 +18,10 @@ confiança dos templates do token, do resumo e do menu.
 - [ ] A janela está em **1920×1080** ou em uma resolução compatível.
 - [ ] A opção **Segundo plano** está marcada.
 - [ ] `dry_run` está `false` no `config.json`.
-- [ ] O app mostra **v1.2.1** no cabeçalho.
+- [ ] O app mostra **v1.3.0** no cabeçalho.
 - [ ] O campo **Limite (min)** está em `180` ou menos (evita sessões longas de AFK).
+- [ ] **Parar sem atividade** está marcado com `30` min (ou um valor menor).
+- [ ] **Parar em aviso de AFK** está marcado.
 - [ ] A aba **Webhook** está configurada, se o envio for testado.
 
 ## 1. Pós-partida com JOGAR NOVAMENTE
@@ -156,7 +158,33 @@ rastreador ficar vazio a saída é agendada.
 Teste também o cancelamento: se um fill voltar antes do clique, o log deve
 mostrar **Saída automática cancelada** e o bot deve continuar AFK.
 
-## 7. Falhas e diagnóstico
+## 7. Proteção de presença e AFK
+
+1. Para testar rápido, marque **Parar sem atividade** e use `5` minutos.
+2. Inicie o farm e deixe teclado/mouse parados. O log deve mostrar um aviso
+   perto da metade do limite e depois:
+
+   ```text
+   Resumo da sessão: 00:05:xx de execução, ...
+   Sem atividade de teclado/mouse há 5 min (limite: 5 min). O farm parou por segurança...
+   ```
+
+3. O app deve voltar para **Parado** e não deve continuar clicando no jogo.
+4. Se a tela **“AINDA ESTÁ AÍ?”** aparecer, o log deve mostrar
+   **Tela de presença ... O farm parou por segurança e não clicou em CONTINUAR
+   JOGANDO.** A captura `presenca_*.png` deve ser salva e **não** deve existir
+   um clique em `CONTINUAR JOGANDO`.
+5. Se um aviso de AFK/inatividade aparecer, confira `aviso_afk_*.png` e o texto
+   lido no registro. O parser também é coberto pelo autoteste, sem depender de
+   esperar o jogo exibir o aviso.
+6. Depois do teste, ajuste o limite para `30` min ou menos.
+
+> [!IMPORTANT]
+> O app não simula movimento nem clica em **CONTINUAR JOGANDO** para burlar o
+> AFK. Se você desativar **Parar em aviso de AFK**, o comportamento antigo volta
+> e o risco de punição aumenta.
+
+## 8. Falhas e diagnóstico
 
 Se algo não funcionar, guarde:
 

@@ -6,6 +6,7 @@ Uso:
 """
 from __future__ import annotations
 
+import copy
 import queue
 import sys
 import tempfile
@@ -15,7 +16,7 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from piratebot import power
+from piratebot import power, presence
 from piratebot.bot import Phase, PirateBot
 from piratebot.config import (
     ASSETS,
@@ -31,10 +32,12 @@ from piratebot.retention import prune_snapshots
 from piratebot.rewards import (
     TOKEN_NAME,
     ChestPrecue,
+    OcrReader,
     RewardEvent,
     RewardGate,
     RewardScanner,
     banner_score,
+    is_afk_warning,
     parse_reward_text,
     reward_badge_score,
 )
@@ -1036,6 +1039,134 @@ def main() -> int:
     )
 
     print()
+    print("Proteção de presença e AFK:")
+    check(
+        "Limite de inatividade desativado com 0",
+        not presence.idle_limit_reached(99999.0, 0),
+    )
+    check(
+        "Limite de inatividade respeita os minutos",
+        presence.idle_limit_reached(1800.0, 30)
+        and not presence.idle_limit_reached(1799.9, 30),
+    )
+
+    warning_samples = (
+        (
+            "AINDA ESTÁ AÍ?\n"
+            "O Fortnite entrará no modo de suspensão em breve.\n"
+            "PRESSIONE QUALQUER TECLA PARA CONTINUAR JOGANDO",
+            True,
+        ),
+        ("Você será removido da partida por inatividade.", True),
+        ("You have been removed from the match for inactivity.", True),
+        ("You are AFK. Move to continue.", True),
+        ("تم نقلك إلى الردهة بسبب الخمول", True),
+        ("VOCÊ ENCONTROU\nFERRAMENTA ESPÍRITO", False),
+        ("YOU FOUND\nPIRATE SHOP ACCESS", False),
+        ("Pronto para jogar? Pressione JOGAR.", False),
+        ("Tempo restante: 10:00", False),
+    )
+    for text, expected in warning_samples:
+        got = is_afk_warning(text)
+        check(
+            f"Aviso de AFK {'reconhecido' if expected else 'ignorado'}",
+            got is expected,
+            repr(text[:70]),
+        )
+
+    warning_lines = [
+        ("AINDA ESTÁ AÍ?", 0.90),
+        ("0:03", 0.90),
+        ("PRESSIONE QUALQUER TECLA PARA CONTINUAR JOGANDO", 0.90),
+    ]
+    full_text = OcrReader._filter_lines(warning_lines, reward_only=False)
+    reward_text = OcrReader._filter_lines(warning_lines)
+    check(
+        "OCR completo preserva aviso fora do centro",
+        is_afk_warning(full_text) and "0:03" not in full_text,
+        repr(full_text),
+    )
+    check(
+        "Filtro de recompensa não mistura aviso distante",
+        reward_text == "",
+        repr(reward_text),
+    )
+    check(
+        "Scanner sem OCR não bloqueia a sessão",
+        RewardScanner(
+            RewardConfig(ocr_enabled=False)
+        ).check_afk_warning(np.zeros((720, 1280, 3), dtype=np.uint8))
+        is None,
+    )
+
+    original_idle = presence.idle_seconds
+    original_locked = presence.session_locked
+    try:
+        presence.session_locked = lambda: False  # type: ignore[assignment]
+        presence.idle_seconds = lambda: 60.0  # type: ignore[assignment]
+        bot_presence = PirateBot(
+            copy.deepcopy(config),
+            queue.Queue(),
+            threading.Event(),
+            threading.Event(),
+        )
+        bot_presence.config.behavior.idle_stop_minutes = 30
+        check(
+            "Presença ativa não para antes do limite",
+            not bot_presence._check_presence(now=100.0),
+        )
+
+        presence.idle_seconds = lambda: 1800.0  # type: ignore[assignment]
+        bot_presence._last_presence_check = 0.0
+        check(
+            "Bot para ao atingir o limite de inatividade",
+            bot_presence._check_presence(now=200.0)
+            and bot_presence.phase == Phase.STOPPED
+            and bot_presence.stop_event.is_set(),
+            bot_presence.message,
+        )
+
+        presence.session_locked = lambda: True  # type: ignore[assignment]
+        bot_locked = PirateBot(
+            copy.deepcopy(config),
+            queue.Queue(),
+            threading.Event(),
+            threading.Event(),
+        )
+        bot_locked.config.behavior.idle_stop_minutes = 0
+        check(
+            "Bot para com a sessão do Windows bloqueada",
+            bot_locked._check_presence(now=100.0)
+            and bot_locked.phase == Phase.STOPPED
+            and bot_locked.stop_event.is_set(),
+            bot_locked.message,
+        )
+    finally:
+        presence.idle_seconds = original_idle  # type: ignore[assignment]
+        presence.session_locked = original_locked  # type: ignore[assignment]
+
+    class FakeRewardScanner:
+        def check_afk_warning(self, frame, now=None):
+            return "AINDA ESTÁ AÍ?\nPRESSIONE QUALQUER TECLA PARA CONTINUAR JOGANDO"
+
+    bot_afk = PirateBot(
+        copy.deepcopy(config),
+        queue.Queue(),
+        threading.Event(),
+        threading.Event(),
+    )
+    bot_afk.config.behavior.stop_on_afk_warning = True
+    bot_afk._rewards = FakeRewardScanner()  # type: ignore[assignment]
+    bot_afk._save_snapshot = lambda *args, **kwargs: None  # type: ignore[method-assign]
+    check(
+        "Bot para em aviso de AFK sem continuar a partida",
+        bot_afk._check_afk_warning(object(), now=1.0)
+        and bot_afk.phase == Phase.STOPPED
+        and "não tentou continuar" in bot_afk.message,
+        bot_afk.message,
+    )
+
+    print()
     print("Limpeza de capturas:")
     with tempfile.TemporaryDirectory() as temp:
         folder = Path(temp)
@@ -1207,11 +1338,18 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as temp:
         config_path = Path(temp) / "config.json"
         custom = load_config(config_path)
+        check(
+            "Configuração padrão ativa a proteção de sessão",
+            custom.behavior.idle_stop_minutes == 30
+            and custom.behavior.stop_on_afk_warning is True,
+        )
         custom.storage.snapshot_max_files = 123
         custom.storage.snapshot_max_age_days = 7
         custom.webhook.enabled = True
         custom.webhook.url = "https://example.com/hook"
         custom.rewards.fallback_label = "Recompensa teste"
+        custom.behavior.idle_stop_minutes = 25
+        custom.behavior.stop_on_afk_warning = False
         save_config(custom, config_path)
         loaded = load_config(config_path)
         check(
@@ -1227,6 +1365,11 @@ def main() -> int:
         check(
             "Configuração preserva recompensas",
             loaded.rewards.fallback_label == "Recompensa teste",
+        )
+        check(
+            "Configuração preserva proteção de sessão",
+            loaded.behavior.idle_stop_minutes == 25
+            and loaded.behavior.stop_on_afk_warning is False,
         )
 
     print()

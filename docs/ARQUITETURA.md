@@ -29,6 +29,7 @@ e quais decisões guiam o comportamento do bot.
 | `piratebot/controller.py` | Foco rápido, cliques e teclas com escala de coordenadas. |
 | `piratebot/config.py` | Dataclasses, valores padrão e leitura/gravação do `config.json`. |
 | `piratebot/power.py` | Prevenção de suspensão do Windows em worker dedicado. |
+| `piratebot/presence.py` | Tempo desde o último teclado/mouse e detecção de sessão bloqueada. |
 | `piratebot/hotkey.py` | Registro global do F8 via `RegisterHotKey`. |
 | `piratebot/rewards.py` | OCR do banner, parser de nomes (PT/EN/AR), deduplicação e brasão dourado. |
 | `piratebot/retention.py` | Limpeza de capturas por quantidade/idade, com proteção das evidências do token. |
@@ -60,17 +61,39 @@ stateDiagram-v2
 
 ### Lobby
 
-`_do_lobby` espera `ready_delay`, confere a tela e clica em **JOGAR**. Se o
-jogo estiver suspenso, tenta **CONTINUAR JOGANDO** antes. Um clique efetivo
-leva a `QUEUING`; se o log não confirmar a partida dentro de
-`matchmaking_timeout`, o bot volta ao lobby e tenta de novo.
+`_do_lobby` espera `ready_delay`, confere a tela e clica em **JOGAR**. Se a
+tela **“AINDA ESTÁ AÍ?”** aparecer, o padrão é encerrar a sessão por segurança,
+sem clicar em **CONTINUAR JOGANDO**. O clique legado só ocorre se
+`stop_on_afk_warning` for desativado. Um clique efetivo leva a `QUEUING`; se o
+log não confirmar a partida dentro de `matchmaking_timeout`, o bot volta ao
+lobby e tenta de novo.
 
 ### Partida
 
-Em `MATCH` o bot fica AFK. A cada `scan_interval_match` ele captura a tela e
-procura o token. O log pode encerrar a partida por três caminhos: fase
-`EndGame`, widget de pós-partida ou `MatchState` `WaitingPostMatch`/`LeavingMap`.
-Todos levam a `POSTMATCH`.
+Em `MATCH` o bot fica AFK. A cada `scan_interval_match` ele captura a tela,
+procura o token e verifica avisos de presença/AFK. O log pode encerrar a
+partida por três caminhos: fase `EndGame`, widget de pós-partida ou `MatchState`
+`WaitingPostMatch`/`LeavingMap`. Todos levam a `POSTMATCH`.
+
+### Proteção de presença e AFK
+
+O loop principal chama `presence` a cada 10 segundos. Se
+`idle_stop_minutes` for maior que zero e `GetLastInputInfo` indicar que o
+teclado/mouse estão parados além do limite, ou se `OpenInputDesktop` indicar
+que a sessão do Windows está bloqueada, o bot registra o resumo da sessão e
+para. Não há movimento, tecla ou clique simulando presença.
+
+Durante `MATCH`, `LOBBY` e `POSTMATCH`, `RewardScanner.check_afk_warning` faz
+uma leitura OCR completa da região central a cada 6 segundos. O parser
+`is_afk_warning` reconhece mensagens como **“AINDA ESTÁ AÍ?”**, “removido por
+inatividade”, “removed for inactivity” e equivalentes em árabe. Se encontrar o
+aviso, o bot salva a captura `aviso_afk_*` e encerra sem tentar continuar a
+partida.
+
+O detector visual da tela **“AINDA ESTÁ AÍ?”** também para a sessão quando
+`stop_on_afk_warning` está ativo. Com a opção desativada, o comportamento antigo
+(clicar em **CONTINUAR JOGANDO**) é preservado apenas para compatibilidade e é
+explicitamente desencorajado na interface e na documentação.
 
 ### Pós-partida
 
@@ -197,7 +220,8 @@ watcher; `manual_token` registra o token marcado pelo usuário.
 - `ui`: coordenadas de botões fixos (JOGAR, CONTINUAR, CLAIM ALL);
 - `detection`: limiares de template, validação de cor e faixa aceita para o
   centro do token;
-- `behavior`: tempos, limites, simulação e modo segundo plano;
+- `behavior`: tempos, limites, proteção de inatividade/AFK, simulação e modo
+  segundo plano;
 - `rewards`: OCR, intervalo de varredura, cooldowns e fallback do brasão;
 - `storage`: limites e carência da limpeza de capturas;
 - `webhook`: ativação, URL, filtros e fila de envio.
@@ -212,8 +236,9 @@ do cliente do jogo. Alterações em `behavior`, `detection`, `rewards` ou
 `selftest.py` cobre templates, imagens negativas, botões, pós-partida, menu,
 fills, parser do log, captura em segundo plano, prevenção de suspensão, OCR e
 parser de recompensas em três idiomas, brasão dourado, deduplicação, retenção
-de capturas, payloads de webhook e um envio HTTP local. O teste ao vivo
-(`--live`) só captura a tela; ele não clica nem rouba o foco.
+de capturas, payloads de webhook, um envio HTTP local e a proteção de
+presença/AFK (`idle_limit_reached`, `is_afk_warning` e leitura OCR completa). O
+teste ao vivo (`--live`) só captura a tela; ele não clica nem rouba o foco.
 
 Para investigar uma falha visual, use:
 
@@ -230,6 +255,8 @@ template sem interagir com o jogo.
 - O OCR usa o idioma instalado no Windows; em árabe, sem o pacote de idioma, o
   banner ainda é enviado pelo brasão, mas com o nome genérico.
 - O modo segundo plano exige janela sem borda e não minimizada.
+- Não há movimento ou check-in automático para burlar AFK. Avisos de presença
+  encerram a sessão por segurança.
 - A tela de recompensa e o CLAIM ALL podem variar entre eventos.
 - A primeira partida real e o caso de último sobrevivente devem ser
   supervisionados; veja [VALIDACAO.md](VALIDACAO.md).

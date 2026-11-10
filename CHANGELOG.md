@@ -4,6 +4,37 @@ Todas as mudanças relevantes deste projeto são registradas aqui.
 O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/)
 e o projeto usa versionamento semântico.
 
+## [1.3.0] - 2026-11-09
+
+### Adicionado
+
+- **Proteção de presença:** o farm para após **30 minutos** sem teclado/mouse
+  (`behavior.idle_stop_minutes`, configurável) e também quando a sessão do
+  Windows está bloqueada. O encerramento registra o resumo da sessão com tempo,
+  partidas e recompensas.
+- **Parada segura em avisos de AFK:** leitura OCR completa da região central
+  reconhece **“AINDA ESTÁ AÍ?”**, avisos de inatividade em português/inglês e
+  equivalentes em árabe. O bot salva a captura e encerra a sessão **sem clicar
+  em CONTINUAR JOGANDO**.
+- Cartão **Proteção de sessão** na aba **Farm**, com limite de inatividade e
+  opção de parar em aviso de AFK.
+- Campos `behavior.idle_stop_minutes` e `behavior.stop_on_afk_warning` no
+  `config.json`, com padrões seguros (`30` e `true`).
+
+### Alterado
+
+- A tela **“AINDA ESTÁ AÍ?”** agora encerra a sessão por padrão em vez de
+  simular presença. O clique antigo em **CONTINUAR JOGANDO** só acontece se
+  `stop_on_afk_warning` for desativado, e a interface avisa sobre o risco.
+- O autoteste passou a cobrir o limite de inatividade, o parser de avisos de
+  AFK, a leitura OCR completa, a parada do bot e os novos padrões de
+  configuração (**145 verificações**).
+- README, arquitetura e roteiro de validação documentam as proteções e o teste
+  supervisionado.
+
+> Esta versão **não** adiciona movimento, teclas ou check-in automático para
+> burlar AFK. O objetivo é reduzir a exposição, não contornar a detecção.
+
 ## [1.2.1] - 2026-11-09
 
 ### Corrigido

@@ -48,6 +48,35 @@ _JUNK_LINE = re.compile(
     r"^(?:\d{1,2}:\d{2}|\d{1,3}|[a-z0-9.-]+\.(?:gg|com|net|br|tv|io)|arlon\w*)$",
     re.IGNORECASE,
 )
+# Avisos de presença/AFK que devem encerrar a sessão em vez de manter o farm.
+# O texto é comparado depois de _fold (minúsculas, sem acentos). Os padrões
+# menos específicos exigem uma segunda palavra de contexto para não confundir
+# nomes de recompensa ou textos do HUD com um aviso real.
+_AFK_WARNING_PATTERNS = (
+    r"\bafk\b",
+    r"\bainda (?:esta|estas) ai\b",
+    r"\bstill there\b",
+    r"\bpress any key\b",
+    r"\bpressione (?:qualquer|uma) tecla\b",
+    r"\baway from keyboard\b",
+    r"\bmodo de suspensao\b",
+    r"\bsuspend mode\b",
+    r"\binatividade\b",
+    r"\binactivity\b",
+    r"الخمول",
+    r"غير نشط",
+    r"بعيدا? عن لوحة المفاتيح",
+    r"\b(?:you are|you're|voce esta|voce estas|esta|estas) (?:currently )?"
+    r"(?:afk|idle|inactive|inativo|inativa|ausente)\b",
+    r"\b(?:voce foi removid[oa]|voce sera removid[oa]|"
+    r"you (?:have been|were|will be) removed)\b",
+    r"\b(?:ausente|inativo|inativa|inactive|idle)\b[\s\S]{0,80}"
+    r"\b(?:remov\w*|expuls\w*|kick\w*|desconect\w*|disconnect\w*|"
+    r"aviso|warning|inatividade|inactivity|afk)\b",
+    r"\b(?:remov\w*|expuls\w*|kick\w*|desconect\w*|disconnect\w*|"
+    r"aviso|warning)\b[\s\S]{0,80}"
+    r"\b(?:ausente|inativo|inativa|inactive|idle|inatividade|inactivity|afk)\b",
+)
 # Linhas de HUD que podem ficar centralizadas e grudar no nome da recompensa.
 _NAME_STOP_PREFIXES = (
     "espaco para",
@@ -147,6 +176,18 @@ def _mentions_token(folded: str) -> bool:
     return any(phrase in folded for phrase in _TOKEN_PHRASES) or (
         "loja pirata" in folded and "token" in folded
     )
+
+
+def is_afk_warning(text: str) -> bool:
+    """True quando o OCR encontrou um aviso de presença, AFK ou inatividade.
+
+    O bot usa esse resultado para encerrar a sessão por segurança. Ele nunca
+    clica em CONTINUAR JOGANDO nem simula movimento para contornar o aviso.
+    """
+    folded = re.sub(r"\s+", " ", _fold(str(text or ""))).strip()
+    if not folded:
+        return False
+    return any(re.search(pattern, folded) for pattern in _AFK_WARNING_PATTERNS)
 
 
 def parse_reward_text(text: str) -> Optional["RewardEvent"]:
@@ -546,6 +587,10 @@ class OcrReader:
         self._lock = threading.Lock()
         self._temp = Path(tempfile.gettempdir()) / f"piratefarm_ocr_{os.getpid()}_{id(self)}.png"
         self._warned = False
+        # Último texto reconhecido, útil para diagnóstico e para a checagem
+        # de avisos de AFK sem uma segunda leitura da mesma captura.
+        self.last_text = ""
+        self.last_text_at = 0.0
 
     def _log(self, text: str, level: str = "debug") -> None:
         if self._logger is not None:
@@ -590,7 +635,15 @@ class OcrReader:
         self,
         frame: np.ndarray,
         region: Optional[tuple[float, float, float, float]] = None,
+        *,
+        full: bool = False,
     ) -> str:
+        """Lê o texto da região.
+
+        Com ``full=True`` devolve todas as linhas aproveitáveis, em vez de
+        filtrar apenas as próximas ao banner de recompensa. É usado para
+        reconhecer avisos de AFK/presença que ficam centralizados na tela.
+        """
         if not self._ensure_engine():
             return ""
         crop = self._crop(frame, region=region)
@@ -606,7 +659,12 @@ class OcrReader:
         with self._lock:
             try:
                 encoded.tofile(str(self._temp))
-                return asyncio.run(self._recognize_async(self._temp, crop.shape[1]))
+                text = asyncio.run(
+                    self._recognize_async(self._temp, crop.shape[1], full=full)
+                )
+                self.last_text = text
+                self.last_text_at = time.time()
+                return text
             except Exception as exc:
                 if not self._warned:
                     self._warned = True
@@ -618,7 +676,9 @@ class OcrReader:
                 except OSError:
                     pass
 
-    async def _recognize_async(self, path: Path, crop_width: int) -> str:
+    async def _recognize_async(
+        self, path: Path, crop_width: int, *, full: bool = False
+    ) -> str:
         from winrt.windows.graphics.imaging import BitmapDecoder
         from winrt.windows.storage import FileAccessMode, StorageFile
 
@@ -644,7 +704,7 @@ class OcrReader:
                 else:
                     center = 0.5
                 lines.append((text, center))
-            return self._filter_lines(lines)
+            return self._filter_lines(lines, reward_only=not full)
         finally:
             try:
                 stream.close()
@@ -652,16 +712,26 @@ class OcrReader:
                 pass
 
     @staticmethod
-    def _filter_lines(lines: list[tuple[str, float]]) -> str:
+    def _filter_lines(
+        lines: list[tuple[str, float]], *, reward_only: bool = True
+    ) -> str:
         """Mantém apenas as linhas próximas ao banner central.
 
         O OCR recebe uma faixa larga da tela. Sem esse filtro, textos do HUD
         (nome do espectador, kill feed, avisos de evento) entram no nome da
         recompensa. O cabeçalho do banner define a âncora horizontal; se ele
-        não for reconhecido, usamos o centro da tela.
+        não for reconhecido, usamos o centro da tela. Com ``reward_only=False``
+        todas as linhas aproveitáveis são mantidas para a checagem de AFK.
         """
         if not lines:
             return ""
+        if not reward_only:
+            kept = []
+            for text, _center in lines:
+                cleaned = clean_ocr_line(text)
+                if cleaned and not _is_junk_line(cleaned):
+                    kept.append(cleaned)
+            return "\n".join(kept)
         anchor = 0.5
         for text, center in lines:
             folded = _fold(text)
@@ -714,8 +784,49 @@ class RewardScanner:
         self.config = config
         self._ocr = OcrReader(logger=logger) if config.ocr_enabled else None
         self._last_scan_at = float("-inf")
+        self._last_afk_scan_at = float("-inf")
         self.last_score = 0.0
         self.last_badge_score = 0.0
+        # Diagnóstico: último texto lido e quando, inclusive nas checagens de
+        # aviso de AFK. Não é usado para confirmar recompensas.
+        self.last_text = ""
+        self.last_text_at = 0.0
+        self.last_afk_text = ""
+
+    # Região central onde ficam os avisos de presença/AFK e intervalo mínimo
+    # entre leituras exclusivas para eles. A leitura de recompensas continua
+    # usando sua própria cadência.
+    AFK_REGION = (0.20, 0.88, 0.10, 0.90)
+    AFK_SCAN_INTERVAL = 6.0
+
+    def check_afk_warning(
+        self,
+        frame: np.ndarray,
+        *,
+        now: Optional[float] = None,
+    ) -> Optional[str]:
+        """Procura um aviso de AFK/presença e devolve o texto reconhecido.
+
+        Retorna ``None`` quando não há OCR, quando o intervalo mínimo ainda
+        não passou ou quando nenhum aviso foi encontrado. A leitura completa
+        (sem o filtro do banner) é o que permite reconhecer "AINDA ESTÁ AÍ?" e
+        mensagens de inatividade fora do banner de recompensa.
+        """
+        if self._ocr is None or frame is None:
+            return None
+        current = time.time() if now is None else now
+        if current - self._last_afk_scan_at < self.AFK_SCAN_INTERVAL:
+            return None
+        self._last_afk_scan_at = current
+        text = self._ocr.recognize(frame, region=self.AFK_REGION, full=True)
+        if not text:
+            return None
+        self.last_text = text
+        self.last_text_at = current
+        if not is_afk_warning(text):
+            return None
+        self.last_afk_text = text
+        return text
 
     def scan(
         self,
@@ -748,6 +859,9 @@ class RewardScanner:
         self.last_badge_score = badge
 
         text = self._ocr.recognize(frame) if self._ocr is not None else ""
+        if text:
+            self.last_text = text
+            self.last_text_at = current
         event = parse_reward_text(text)
         if event is not None:
             return RewardEvent(
@@ -769,6 +883,8 @@ class RewardScanner:
                 frame, region=(0.05, 0.42, 0.22, 0.78)
             )
             if tight_text and tight_text != text:
+                self.last_text = tight_text
+                self.last_text_at = current
                 tight_event = parse_reward_text(tight_text)
                 if tight_event is not None:
                     return RewardEvent(
