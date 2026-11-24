@@ -7,6 +7,7 @@ import time
 from ctypes import wintypes
 from typing import Callable, Optional
 
+from .ambient import InputUnavailable
 from .config import AppConfig
 from .vision import GameWindow
 
@@ -51,12 +52,109 @@ kernel32.GetCurrentThreadId.restype = wintypes.DWORD
 
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_MOVE = 0x0001
 VK_MENU = 0x12
 VK_RETURN = 0x0D
 VK_SPACE = 0x20
 VK_ESCAPE = 0x1B
 KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_SCANCODE = 0x0008
+INPUT_MOUSE = 0
+INPUT_KEYBOARD = 1
 SW_RESTORE = 9
+
+# Scan codes físicos: o Fortnite lê entrada por scan code (raw input), então
+# keybd_event com virtual key não chega ao jogo em todos os modos de janela.
+SCAN_CODES = {
+    "w": 0x11,
+    "a": 0x1E,
+    "s": 0x1F,
+    "d": 0x20,
+    "space": 0x39,
+    "shift": 0x2A,
+    "ctrl": 0x1D,
+    "e": 0x12,
+    "b": 0x30,
+    "c": 0x2E,
+    "f": 0x21,
+}
+
+_ULONG_PTR = ctypes.c_size_t
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", _ULONG_PTR),
+    ]
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", _ULONG_PTR),
+    ]
+
+
+class _HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
+    ]
+
+
+class _INPUTUNION(ctypes.Union):
+    _fields_ = [
+        ("ki", _KEYBDINPUT),
+        ("mi", _MOUSEINPUT),
+        ("hi", _HARDWAREINPUT),
+    ]
+
+
+class _INPUT(ctypes.Structure):
+    _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
+
+
+user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(_INPUT), ctypes.c_int]
+user32.SendInput.restype = wintypes.UINT
+
+
+def _send_input(payload: _INPUT) -> bool:
+    array = (_INPUT * 1)(payload)
+    return user32.SendInput(1, array, ctypes.sizeof(_INPUT)) == 1
+
+
+def _scan_event(scan_code: int, key_up: bool) -> bool:
+    payload = _INPUT()
+    payload.type = INPUT_KEYBOARD
+    payload.u.ki.wVk = 0
+    payload.u.ki.wScan = scan_code
+    payload.u.ki.dwFlags = KEYEVENTF_SCANCODE | (
+        KEYEVENTF_KEYUP if key_up else 0
+    )
+    payload.u.ki.time = 0
+    payload.u.ki.dwExtraInfo = 0
+    return _send_input(payload)
+
+
+def _mouse_move(dx: int, dy: int) -> bool:
+    payload = _INPUT()
+    payload.type = INPUT_MOUSE
+    payload.u.mi.dx = dx
+    payload.u.mi.dy = dy
+    payload.u.mi.mouseData = 0
+    payload.u.mi.dwFlags = MOUSEEVENTF_MOVE
+    payload.u.mi.time = 0
+    payload.u.mi.dwExtraInfo = 0
+    return _send_input(payload)
 
 
 class GameController:
@@ -71,6 +169,9 @@ class GameController:
         self.config = config
         self.dry_run = dry_run
         self.logger = logger or (lambda message, level="info": None)
+        # Teclas de movimento pressionadas agora; release_all() é a rede de
+        # segurança para nenhuma tecla ficar presa se a rajada for abortada.
+        self._held: set[str] = set()
 
     @property
     def hwnd(self) -> int:
@@ -245,3 +346,76 @@ class GameController:
 
     def press_escape(self) -> bool:
         return self._press_key("escape", VK_ESCAPE)
+
+    # ------------------------------------------------ movimento anti-AFK
+    def begin_burst(self) -> object:
+        """Coloca o jogo em primeiro plano e devolve o contexto para restaurar.
+
+        Levanta ``InputUnavailable`` quando não é possível focar: sem foco, as
+        teclas iriam para a janela errada.
+        """
+        if self.dry_run:
+            return None
+        snapshot = self._background_context()
+        if not self.ensure_foreground(force=True):
+            if snapshot is not None:
+                self._restore_context(snapshot)
+            raise InputUnavailable("não consegui focar o Fortnite")
+        # O jogo precisa de um instante para assumir o teclado depois do foco.
+        time.sleep(0.20)
+        return snapshot
+
+    def end_burst(self, token: object) -> None:
+        self.release_all()
+        if token is not None:
+            self._restore_context(token)  # type: ignore[arg-type]
+
+    def key_down(self, name: str) -> bool:
+        scan = SCAN_CODES.get(name)
+        if scan is None or self.dry_run:
+            return False
+        if not _scan_event(scan, key_up=False):
+            return False
+        self._held.add(name)
+        return True
+
+    def key_up(self, name: str) -> bool:
+        scan = SCAN_CODES.get(name)
+        if scan is None or self.dry_run:
+            return False
+        self._held.discard(name)
+        return _scan_event(scan, key_up=True)
+
+    def release_all(self) -> None:
+        """Solta toda tecla de movimento pressionada por este controlador."""
+        if self.dry_run:
+            self._held.clear()
+            return
+        for name in tuple(self._held):
+            scan = SCAN_CODES.get(name)
+            if scan is not None:
+                _scan_event(scan, key_up=True)
+        self._held.clear()
+
+    def tap_key(self, name: str, hold: float = 0.08) -> bool:
+        scan = SCAN_CODES.get(name)
+        if scan is None or self.dry_run:
+            return False
+        if not _scan_event(scan, key_up=False):
+            return False
+        time.sleep(max(0.03, hold))
+        _scan_event(scan, key_up=True)
+        return True
+
+    def look(self, dx: int, dy: int, steps: int = 6) -> None:
+        """Gira a câmera em passos pequenos, como um mouse de verdade."""
+        if self.dry_run or (dx == 0 and dy == 0):
+            return
+        steps = max(1, min(12, int(steps)))
+        step_x = int(round(dx / steps))
+        step_y = int(round(dy / steps))
+        for index in range(steps):
+            move_x = step_x if index < steps - 1 else dx - step_x * (steps - 1)
+            move_y = step_y if index < steps - 1 else dy - step_y * (steps - 1)
+            _mouse_move(move_x, move_y)
+            time.sleep(0.012)

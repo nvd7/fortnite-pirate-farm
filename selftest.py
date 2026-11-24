@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import queue
+import random
 import sys
 import tempfile
 import threading
@@ -17,10 +18,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from piratebot import power, presence
+from piratebot.ambient import AmbientMovement, plan_burst
 from piratebot.bot import Phase, PirateBot
 from piratebot.config import (
     ASSETS,
     LOGS,
+    AmbientConfig,
     RewardConfig,
     StorageConfig,
     WebhookConfig,
@@ -1165,6 +1168,101 @@ def main() -> int:
         and "não tentou continuar" in bot_afk.message,
         bot_afk.message,
     )
+
+    print()
+    print("Movimento anti-AFK (presença na partida):")
+    with tempfile.TemporaryDirectory() as temp:
+        ambient_cfg = AmbientConfig()
+        rng = random.Random(7)
+        bursts = [plan_burst(rng, ambient_cfg) for _ in range(120)]
+        check(
+            "Rajada anti-AFK sempre começa andando",
+            all(burst and burst[0].kind == "walk" for burst in bursts),
+        )
+        check(
+            "Rajada anti-AFK respeita o teto de tempo",
+            all(
+                sum(action.duration for action in burst)
+                <= ambient_cfg.max_burst_seconds + 0.001
+                for burst in bursts
+            ),
+        )
+        check(
+            "Rajada anti-AFK respeita o número de ações",
+            all(
+                ambient_cfg.burst_min_actions
+                <= len(burst)
+                <= ambient_cfg.burst_max_actions
+                for burst in bursts
+            ),
+        )
+        check(
+            "Rajada anti-AFK nunca repete o mesmo plano",
+            len({tuple(action.kind for action in burst) for burst in bursts}) > 1,
+        )
+
+        class FakeBackend:
+            def __init__(self) -> None:
+                self.held: set[str] = set()
+                self.events: list[str] = []
+
+            def begin_burst(self) -> object:
+                self.events.append("begin")
+                return "snapshot"
+
+            def end_burst(self, token: object) -> None:
+                self.events.append("end")
+
+            def key_down(self, name: str) -> None:
+                self.held.add(name)
+
+            def key_up(self, name: str) -> None:
+                self.held.discard(name)
+
+            def release_all(self) -> None:
+                self.held.clear()
+
+            def tap_key(self, name: str, hold: float) -> None:
+                self.events.append(f"tap:{name}")
+
+            def look(self, dx: int, dy: int) -> None:
+                self.events.append("look")
+
+        fast = AmbientConfig(
+            start_delay=0.0, interval_min=5.0, interval_max=5.0, max_burst_seconds=1.5
+        )
+        backend = FakeBackend()
+        movement = AmbientMovement(
+            fast, backend, lambda: True, rng=random.Random(3)  # type: ignore[arg-type]
+        )
+        movement.start()
+        time.sleep(1.4)
+        movement.pause()
+        time.sleep(0.1)
+        check(
+            "Movimento anti-AFK não deixa tecla presa ao pausar",
+            not backend.held,
+            f"presas={sorted(backend.held)}",
+        )
+        movement.stop()
+        check(
+            "Movimento anti-AFK age quando liberado",
+            movement.stats()["bursts"] >= 1,
+            movement.stats(),
+        )
+
+        blocked_backend = FakeBackend()
+        blocked = AmbientMovement(
+            fast, blocked_backend, lambda: False, rng=random.Random(5)  # type: ignore[arg-type]
+        )
+        blocked.start()
+        time.sleep(0.6)
+        blocked.stop()
+        check(
+            "Movimento anti-AFK respeita a fase da partida",
+            "begin" not in blocked_backend.events,
+            blocked_backend.events,
+        )
 
     print()
     print("Limpeza de capturas:")

@@ -195,6 +195,33 @@ class BehaviorConfig:
 
 
 @dataclass
+class AmbientConfig:
+    """Movimento ambiente que impede o personagem de ficar parado na partida."""
+
+    enabled: bool = True
+    # Tempo de espera após entrar na partida (carregamento, queda, HUD).
+    start_delay: float = 12.0
+    # Intervalo aleatório entre duas rajadas de movimento.
+    interval_min: float = 35.0
+    interval_max: float = 75.0
+    # Quantidade de ações por rajada e teto de tempo da rajada.
+    burst_min_actions: int = 3
+    burst_max_actions: int = 6
+    max_burst_seconds: float = 8.0
+    look_enabled: bool = True
+    jump_enabled: bool = True
+    crouch_enabled: bool = True
+    # Chance de correr (W + SHIFT) em vez de andar.
+    sprint_chance: float = 0.25
+    # Emote (B) com essa chance por rajada; 0 desliga.
+    emote_chance: float = 0.0
+    # Não rouba o foco se o teclado/mouse foram usados há menos disso.
+    respect_user_input_seconds: float = 1.5
+    # Tempo máximo parado após a morte, antes de voltar a mandar teclas.
+    dead_resume_seconds: float = 90.0
+
+
+@dataclass
 class AppConfig:
     game: GameConfig = field(default_factory=GameConfig)
     ui: UIConfig = field(default_factory=UIConfig)
@@ -203,6 +230,7 @@ class AppConfig:
     rewards: RewardConfig = field(default_factory=RewardConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     webhook: WebhookConfig = field(default_factory=WebhookConfig)
+    ambient: AmbientConfig = field(default_factory=AmbientConfig)
 
 
 def load_config(path: Path = CONFIG_PATH) -> AppConfig:
@@ -222,6 +250,7 @@ def load_config(path: Path = CONFIG_PATH) -> AppConfig:
         rewards=_build(RewardConfig, raw.get("rewards", {})),
         storage=_build(StorageConfig, raw.get("storage", {})),
         webhook=_build(WebhookConfig, raw.get("webhook", {})),
+        ambient=_build(AmbientConfig, raw.get("ambient", {})),
     )
     cfg.game.log_path = _expand_path(cfg.game.log_path)
     return cfg
@@ -243,6 +272,7 @@ def save_config(cfg: AppConfig, path: Path = CONFIG_PATH) -> None:
         "rewards": cfg.rewards.__dict__,
         "storage": cfg.storage.__dict__,
         "webhook": cfg.webhook.__dict__,
+        "ambient": cfg.ambient.__dict__,
     }
     with path.open("w", encoding="utf-8") as fh:
         json.dump(data, fh, indent=2, ensure_ascii=False)

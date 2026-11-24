@@ -37,12 +37,14 @@
 > aceita o risco de perder. O programa não injeta código no jogo: ele lê o log
 > local, captura a tela e envia cliques/teclas como um usuário. Deixar o farm
 > AFK por horas aumenta o risco de ban; use o **limite de execução** (padrão de
-> 180 minutos) e não tente burlar a detecção de AFK. O app também para após
-> **30 minutos sem teclado/mouse** e encerra ao detectar **“AINDA ESTÁ AÍ?”** ou
-> avisos de inatividade, sem clicar em **CONTINUAR JOGANDO**.
+> 180 minutos). O app mantém o personagem em movimento durante a partida
+> (**movimento anti-AFK**) para não ficar parado enquanto o esquadrão farma, e
+> para após **30 minutos sem teclado/mouse** quando o movimento está desligado.
 
 > [!IMPORTANT]
-> **Status:** v1.3.0 - proteção de presença e parada segura em avisos de AFK,
+> **Status:** v1.4.0 - movimento anti-AFK dentro da partida (caminhada,
+> olhada, agachar e pular em rajadas aleatórias), proteção de presença e parada
+> segura em avisos de AFK,
 > identificação do nome das recompensas por OCR, envio opcional de cada banner
 > para um webhook, limpeza automática de capturas, instalação em um clique e
 > interface com abas **Farm** e **Webhook**. O primeiro farm com partidas reais
@@ -77,11 +79,13 @@ o botão **CLAIM ALL**. Nada é enviado para a internet por padrão; o webhook d
 recompensas é opcional e só funciona quando você configura uma URL.
 
 > [!WARNING]
-> O app **não simula movimento, teclas ou presença** para contornar a detecção
-> de AFK. Quando o jogo pergunta **“AINDA ESTÁ AÍ?”** ou mostra um aviso de
-> inatividade, ele encerra a sessão. Essa é uma decisão de segurança, não uma
-> falha: continuar clicando em **CONTINUAR JOGANDO** é exatamente o tipo de
-> evasão que pode agravar uma punição.
+> O app **simula movimento do personagem** durante a partida, como um jogador
+> distraído: caminhada curta, strafe, giro de câmera, agachar e pular em
+> rajadas aleatórias de 35 a 75 s. Isso existe porque o Fortnite passou a punir
+> jogador parado dentro da partida, mesmo com o esquadrão vivo. Continua sendo
+> automação: movimento automático é detectável e pode violar os Termos de
+> Serviço. Ajuste `ambient.*` no `config.json` ou desligue em **Movimento
+> anti-AFK** na aba **Farm**.
 
 ---
 
@@ -104,9 +108,15 @@ recompensas é opcional e só funciona quando você configura uma URL.
   **Voltar ao Lobby**. A saída é cancelada se algum preenchimento voltar e nunca
   acontece com o token encontrado.
 - **CLAIM ALL automático** na tela de recompensa do token.
-- **Proteção de presença:** para após **30 minutos** sem teclado/mouse, para se a
-  sessão do Windows for bloqueada e encerra ao detectar **“AINDA ESTÁ AÍ?”** ou
-  um aviso de AFK/inatividade. O padrão é **não clicar em CONTINUAR JOGANDO**.
+- **Movimento anti-AFK:** durante a partida o personagem caminha, dá strafe,
+  gira a câmera, agacha e pula em rajadas aleatórias (35–75 s), com pausa
+  automática em menu, morte, token encontrado e saída do esquadrão. O objetivo
+  é não ficar parado enquanto o resto do esquadrão farma baús. Nenhuma tecla
+  fica presa: toda rajada termina em `release_all`.
+- **Proteção de presença:** para após **30 minutos** sem teclado/mouse quando o
+  movimento anti-AFK está desligado, e para se a sessão do Windows for
+  bloqueada. Com `stop_on_afk_warning` desligado, um aviso de AFK é resolvido
+  clicando em **CONTINUAR JOGANDO** em vez de encerrar a sessão.
 - **Prevenção de suspensão do Windows:** botão **Manter PC acordado** e proteção
   automática enquanto o bot roda. Bloquear o Windows manualmente encerra o farm.
 - **Interface escura em PT-BR**, com status, contadores, log ao vivo e atalho
@@ -333,6 +343,36 @@ Fortnite em primeiro plano e não use o PC durante o farm.
 
 ---
 
+## Movimento anti-AFK
+
+O Fortnite passou a punir jogador parado dentro da partida. Com
+`ambient.enabled` ligado, o bot mantém o personagem vivo durante toda a
+partida:
+
+| Etapa | O que acontece |
+| --- | --- |
+| Espera | 12 s após entrar na partida (carregamento e queda) |
+| Rajada | 3 a 6 ações, no máximo 8 s, com intervalo aleatório de 35 a 75 s |
+| Ações | Caminhar (W), correr (W+SHIFT, 25%), strafe (A/D), girar a câmera, agachar (CTRL), pular (ESPAÇO), pausa curta |
+| Câmera | Giro em passos pequenos com `SendInput` relativo, às vezes no meio da caminhada |
+| Pausas | Menu de saída aberto, morte (`dead_resume_seconds`), token encontrado, preenchimentos saindo, lobby e pós-partida |
+| Foco | O jogo vem para a frente só durante a rajada e o foco anterior volta no fim |
+| Teclas | `SendInput` com scan code; toda rajada termina em `release_all()` |
+
+Detalhes importantes:
+
+- **Não interrompe digitação:** se o teclado/mouse foram usados há menos de
+  `respect_user_input_seconds` (1,5 s), a rajada é adiada.
+- **Não age no lobby, no pós-partida nem com o menu aberto:** a regra é única,
+  em `PirateBot._ambient_allowed()`.
+- **Morte:** após `OnPlayerPawnDied` o movimento pausa por
+  `dead_resume_seconds` (90 s) e volta — se o personagem ainda estiver morto,
+  as teclas não fazem nada.
+- **Proteção de inatividade:** como o movimento envia entrada real, o
+  `GetLastInputInfo` do Windows continua sendo atualizado e o limite de
+  `idle_stop_minutes` não derruba o farm. Desligue o movimento e a proteção
+  volta a valer.
+
 ## Configuração
 
 As opções ficam em **`config.json`**. A interface salva automaticamente
@@ -357,6 +397,20 @@ relativas a **1920×1080** e escaladas para o tamanho real da janela.
 | `behavior.postmatch_timeout` | `180.0` | Tempo (s) máximo nas telas de pós-partida |
 | `behavior.squad_leave_delay` | `10.0` | Espera (s) antes de sair quando o esquadrão fica vazio |
 | `behavior.squad_leave_retry` | `20.0` | Intervalo (s) entre tentativas de saída |
+| `ambient.enabled` | `true` | Movimento anti-AFK dentro da partida |
+| `ambient.start_delay` | `12.0` | Espera (s) após entrar na partida antes da primeira rajada |
+| `ambient.interval_min` | `35.0` | Intervalo mínimo (s) entre rajadas |
+| `ambient.interval_max` | `75.0` | Intervalo máximo (s) entre rajadas |
+| `ambient.burst_min_actions` | `3` | Ações mínimas por rajada |
+| `ambient.burst_max_actions` | `6` | Ações máximas por rajada |
+| `ambient.max_burst_seconds` | `8.0` | Teto de tempo (s) de uma rajada |
+| `ambient.look_enabled` | `true` | Girar a câmera nas rajadas |
+| `ambient.jump_enabled` | `true` | Pular nas rajadas |
+| `ambient.crouch_enabled` | `true` | Agachar nas rajadas |
+| `ambient.sprint_chance` | `0.25` | Chance de correr em vez de andar |
+| `ambient.emote_chance` | `0.0` | Chance de emote (B) por rajada; `0` desliga |
+| `ambient.respect_user_input_seconds` | `1.5` | Não rouba o foco se você acabou de digitar |
+| `ambient.dead_resume_seconds` | `90.0` | Tempo de pausa após a morte |
 | `ui.play_button` | `[265, 938]` | Centro do botão JOGAR no lobby |
 | `ui.suspend_continue` | `[960, 496]` | Centro de CONTINUAR JOGANDO |
 | `ui.claim_button` | `[965, 992]` | Centro do CLAIM ALL |
@@ -577,12 +631,12 @@ fortnite_pirate_farm/
 | **“Falha na captura em segundo plano”** | Confirme que o jogo não está minimizado, desative tela cheia exclusiva e a suspensão do Fortnite. Teste **Testar detecção agora**. |
 | **O bot não clica em JOGAR** | Use **Testar detecção agora** e veja `logs\teste_tela.png`. Confirme o lobby, o modo Battle Royale e o Squad + Fill. |
 | **Token não detectado** | Veja as capturas em `logs\snapshots\`. Atualizações do jogo podem mudar a arte; siga o [guia de calibragem](docs/CALIBRAGEM.md) para recapturar o template. |
-| **O jogo mostra “AINDA ESTÁ AÍ?”** | Por padrão o farm **para por segurança** e não clica em **CONTINUAR JOGANDO**. Desative a suspensão do Fortnite nas configurações e mantenha a janela sem borda. Clicar em continuar é evasão de presença e aumenta o risco de ban. |
+| **O jogo mostra “AINDA ESTÁ AÍ?”** | Com `behavior.stop_on_afk_warning` desligado (padrão novo) o bot clica em **CONTINUAR JOGANDO** e segue. Se aparecer mesmo com o movimento ligado, aumente `ambient.burst_max_actions` e reduza `ambient.interval_max`. |
 | **O PC dorme ou a tela bloqueia** | Ative **Manter PC acordado** e desative a suspensão/bloqueio automático no Windows. Se a sessão for bloqueada, o farm para em vez de continuar sem ninguém. |
 | **A tela de pós-partida não avança** | Confira as capturas `logs\snapshots\pos_partida_*.png`. Ajuste `postmatch_click_after`/`postmatch_click_retry` e, se o resumo não tiver botões, `postmatch_menu_after`. |
 | **O bot para sozinho após algumas horas** | É o limite de execução (padrão `180` min). Ajuste **Limite (min)** na aba **Farm** ou `behavior.max_runtime_minutes`; `0` desativa o limite, mas aumenta o risco de ban por AFK. |
 | **“Sem atividade de teclado/mouse”** | É a proteção de presença (padrão `30` min). Mexa no teclado/mouse ou ajuste **Parar sem atividade** na aba **Farm**. Desativar essa proteção permite farmar sem ninguém por perto e aumenta o risco. |
-| **Recebi ban por AFK** | O limite de execução e as proteções de presença reduzem a exposição, mas não eliminam o risco. Não use movimento automático para burlar a detecção; prefira sessões curtas e supervisionadas. |
+| **Recebi ban por AFK** | O movimento anti-AFK reduz a exposição a punição por inatividade, mas não elimina o risco: automação é detectável. Use o limite de execução, sessões curtas e, de preferência, conta alternativa. |
 | **Não sei qual botão o resumo exibe** | Rode `tools\check_postmatch.py` e veja a confiança de cada template. O diagnóstico não clica no jogo. |
 | **Falso positivo de token** | Guarde a captura de `logs\snapshots\` e abra uma issue; não aumente o limiar sem testar as imagens negativas. O detector já exige o token no centro-alto da tela. |
 | **Webhook não envia** | Confira **Webhook ativado**, a URL e use **Testar webhook**. Erros de rede aparecem no registro; a URL é mascarada. |
@@ -606,9 +660,9 @@ fortnite_pirate_farm/
 - **Atualizações do Fortnite podem quebrar a detecção.** O projeto é
   experimental e não tem vínculo com a Epic Games.
 - **Risco de conta:** automação pode violar os Termos de Serviço. Você é
-  responsável pelo uso e por qualquer consequência na sua conta. O app não
-  implementa movimento/check-in automático para burlar AFK; ele **para** quando
-  detecta ausência de presença ou um aviso de inatividade.
+  responsável pelo uso e por qualquer consequência na sua conta. O app
+  implementa movimento anti-AFK opcional (`ambient.enabled`), que reduz a
+  chance de punição por inatividade mas não a elimina.
 - **Sem garantias.** O software é fornecido sob a licença MIT, sem garantia de
   funcionamento ou de obtenção do token.
 

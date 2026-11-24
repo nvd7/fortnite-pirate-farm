@@ -10,6 +10,7 @@ from enum import StrEnum
 from typing import Optional
 
 from . import power, presence
+from .ambient import AmbientMovement
 from .config import ASSETS, LOGS, AppConfig
 from .controller import GameController
 from .logwatcher import STATE_LABELS, STATE_LOBBY, STATE_LOGIN, STATE_MATCH, LogEvent, LogWatcher
@@ -154,6 +155,11 @@ class PirateBot:
         self._leave_menu_open = False
         self._leave_warned = False
 
+        # Presença dentro da partida: movimento ambiente enquanto o personagem
+        # está vivo. Não roda no lobby, no pós-partida nem com o menu aberto.
+        self._ambient: Optional[AmbientMovement] = None
+        self._player_dead_until = 0.0
+
     # ------------------------------------------------------------------ API
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -218,6 +224,7 @@ class PirateBot:
 
         self._rewards = RewardScanner(self.config.rewards, logger=self._emit_log)
         self._start_webhook()
+        self._start_ambient()
         self._prune_snapshots("inicial")
         interval = float(self.config.storage.prune_interval_seconds)
         self._next_prune_at = time.time() + (interval if interval > 0 else 3600.0)
@@ -376,6 +383,9 @@ class PirateBot:
 
         if event.kind == "player_died":
             if self.phase == Phase.MATCH:
+                self._player_dead_until = time.time() + max(
+                    0.0, float(self.config.ambient.dead_resume_seconds)
+                )
                 self._emit_log(
                     "Seu personagem morreu. Continuo AFK; o esquadrão ainda pode achar o token.",
                     "info",
@@ -503,6 +513,9 @@ class PirateBot:
         self._claim_attempted = False
         self._last_match_report = time.time()
         self._suspend_counter = 0
+        self._player_dead_until = 0.0
+        if self._ambient is not None:
+            self._ambient.resume()
         suffix = f" ({reason})" if reason else ""
         self.message = "Partida em andamento — AFK."
         self._emit_log(
@@ -928,6 +941,9 @@ class PirateBot:
 
         self._squad_leave_attempts += 1
         attempt = self._squad_leave_attempts
+        if self._ambient is not None:
+            # Solta W/Shift antes de abrir o menu: tecla presa + ESC confunde a UI.
+            self._ambient.pause()
         self._emit_log(
             f"Abrindo o menu para sair da partida (tentativa {attempt}).",
             "warn",
@@ -1095,6 +1111,8 @@ class PirateBot:
         )
 
     def _do_match(self, now: float) -> None:
+        if self._ambient is not None and not self._squad_leave_due_at:
+            self._ambient.resume()
         if self._squad_leave_due_at:
             if self.token_found:
                 self._cancel_squad_leave("token encontrado")
@@ -1543,8 +1561,6 @@ class PirateBot:
         para e registra o resumo da sessão.
         """
         idle_limit = int(self.config.behavior.idle_stop_minutes)
-        if idle_limit <= 0 and not self.config.behavior.stop_on_afk_warning:
-            return False
         if now - self._last_presence_check < 10.0:
             return False
         self._last_presence_check = now
@@ -1590,12 +1606,12 @@ class PirateBot:
         return False
 
     def _check_afk_warning(self, frame, now: Optional[float] = None) -> bool:
-        """Encerra a sessão se o jogo exibir um aviso de AFK/inatividade."""
-        if (
-            frame is None
-            or self._rewards is None
-            or not self.config.behavior.stop_on_afk_warning
-        ):
+        """Encerra a sessão se o jogo exibir um aviso de AFK/inatividade.
+
+        Com ``stop_on_afk_warning`` desligado o aviso é tratado como qualquer
+        outra tela: o botão CONTINUAR JOGANDO é clicado e o farm segue.
+        """
+        if frame is None or self._rewards is None:
             return False
         if self.stop_event.is_set():
             return True
@@ -1609,10 +1625,31 @@ class PirateBot:
         self._save_snapshot(frame, "aviso_afk")
         raw = " ".join(str(text).split())[:180]
         self._emit_log(f"Texto do aviso de AFK: {raw}", "warn")
+        if not self.config.behavior.stop_on_afk_warning:
+            self._dismiss_afk_prompt(frame, "aviso de AFK")
+            return False
         self._safety_stop(
             "Aviso de AFK/inatividade detectado no jogo. O farm parou por "
             "segurança e não tentou continuar a partida."
         )
+        return True
+
+    def _dismiss_afk_prompt(self, frame, context: str) -> bool:
+        """Clica em CONTINUAR JOGANDO quando o usuário aceitou o risco."""
+        if self._detector is None or self._controller is None:
+            return False
+        hit = self._detector.find_suspend_button(frame)
+        if hit is None:
+            self._emit_log(
+                "Aviso de AFK sem o botão CONTINUAR JOGANDO visível; "
+                "continuo observando.",
+                "debug",
+            )
+            return False
+        self._save_snapshot(frame, "afk_continuar", log=False)
+        self._emit_log(f"Clicando em CONTINUAR JOGANDO ({context}).", "warn")
+        self._controller.click_client(hit.center[0], hit.center[1])
+        self._next_scan_at = time.time() + 2.0
         return True
 
     def _stop_on_suspend_prompt(self, frame, context: str) -> None:
@@ -1660,6 +1697,11 @@ class PirateBot:
 
     def _cleanup(self) -> None:
         self.stop_event.set()
+        if self._ambient is not None:
+            try:
+                self._ambient.stop(timeout=2.0)
+            except Exception:
+                pass
         power.set_awake("bot", False)
         with self._webhook_lock:
             notifier = self._webhook
@@ -1674,6 +1716,47 @@ class PirateBot:
         self._prune_snapshots("final", log=False)
         if self.phase not in (Phase.FINISHED, Phase.ERROR, Phase.STOPPED):
             self._emit_log("Bot encerrado.", "info")
+
+    # ----------------------------------------------------- movimento anti-AFK
+    def _start_ambient(self) -> None:
+        """Cria a thread de presença dentro da partida (movimento de bot)."""
+        cfg = self.config.ambient
+        if not cfg.enabled or self._controller is None:
+            return
+        self._ambient = AmbientMovement(
+            cfg,
+            self._controller,
+            should_run=self._ambient_allowed,
+            logger=self._emit_log,
+            idle_probe=presence.idle_seconds,
+            dry_run=self.config.behavior.dry_run,
+        )
+        self._ambient.start()
+        self._emit_log(
+            "Movimento anti-AFK ativo: rajadas de "
+            f"{int(cfg.interval_min)}–{int(cfg.interval_max)}s durante a partida, "
+            "com pausa em menu, morte e saída do esquadrão.",
+            "info",
+        )
+
+    def _ambient_allowed(self) -> bool:
+        """Regra única de quando o personagem pode se mexer sozinho."""
+        if self._ambient is None or not self.config.ambient.enabled:
+            return False
+        if self.config.behavior.dry_run:
+            return False
+        if self.phase != Phase.MATCH:
+            return False
+        if self.token_found:
+            return False
+        if time.time() < self._player_dead_until:
+            return False
+        if self._leave_menu_open or self._leave_button_clicked:
+            return False
+        if self._squad_leave_due_at:
+            return False
+        start_delay = max(0.0, float(self.config.ambient.start_delay))
+        return (time.time() - self._match_started_at) >= start_delay
 
     # ----------------------------------------------------- recompensas/webhook
     def _start_webhook(self) -> None:
@@ -1924,6 +2007,7 @@ class PirateBot:
                 "elapsed": time.time() - self.started_at,
                 "rewards": self._rewards_detected,
                 "last_reward": self._last_reward,
+                "ambient": self._ambient.stats() if self._ambient else None,
             }
         )
 

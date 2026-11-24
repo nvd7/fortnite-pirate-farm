@@ -1,3 +1,20 @@
+## 1.4.0 - movimento anti-AFK
+
+- Novo módulo `piratebot/ambient.py`: rajadas aleatórias de caminhada, strafe,
+  giro de câmera, agachar e pular durante a partida, com intervalos de 35 a
+  75 s e pausa em menu, morte, token encontrado e saída do esquadrão.
+- `GameController` ganhou entrada por scan code (`SendInput`), `look()`
+  relativo e `release_all()` — nenhuma tecla fica presa quando a rajada é
+  abortada.
+- Nova seção `ambient` no `config.json` e chip **Movimento anti-AFK** na aba
+  **Farm**.
+- `stop_on_afk_warning: false` agora resolve o aviso de AFK clicando em
+  **CONTINUAR JOGANDO** também no caminho de OCR, em vez de encerrar a sessão.
+- A checagem de sessão do Windows bloqueada deixou de ser ignorada quando o
+  limite de inatividade estava desligado.
+- `selftest.py`: 7 verificações novas para o planejamento e a thread de
+  movimento.
+
 # Changelog
 
 Todas as mudanças relevantes deste projeto são registradas aqui.

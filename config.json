@@ -91,7 +91,7 @@
     "max_matches": 0,
     "max_runtime_minutes": 180,
     "idle_stop_minutes": 30,
-    "stop_on_afk_warning": true,
+    "stop_on_afk_warning": false,
     "auto_close_success_seconds": 30,
     "dry_run": false,
     "background_mode": true
@@ -125,5 +125,21 @@
     "username": "Pirate Farm",
     "timeout_seconds": 15.0,
     "max_queue": 50
+  },
+  "ambient": {
+    "enabled": true,
+    "start_delay": 12.0,
+    "interval_min": 35.0,
+    "interval_max": 75.0,
+    "burst_min_actions": 3,
+    "burst_max_actions": 6,
+    "max_burst_seconds": 8.0,
+    "look_enabled": true,
+    "jump_enabled": true,
+    "crouch_enabled": true,
+    "sprint_chance": 0.25,
+    "emote_chance": 0.0,
+    "respect_user_input_seconds": 1.5,
+    "dead_resume_seconds": 90.0
   }
 }

@@ -425,7 +425,7 @@ class PirateFarmApp:
         ).pack(side="left")
         tk.Label(
             safety_head,
-            text="sem simular movimento ou presença",
+            text="movimento ambiente + proteções de sessão",
             font=("Segoe UI", 8),
             fg=DIM,
             bg=CARD,
@@ -484,12 +484,22 @@ class PirateFarmApp:
             command=self._update_mode_hint,
         )
         self.afk_chip.pack(side="left", padx=(16, 0))
+        self.ambient_var = tk.BooleanVar(value=self.config.ambient.enabled)
+        self.ambient_chip = self._chip(
+            safety_row,
+            "Movimento anti-AFK",
+            self.ambient_var,
+            command=self._update_mode_hint,
+        )
+        self.ambient_chip.pack(side="left", padx=(16, 0))
         tk.Label(
             safety_card,
             text=(
-                "O farm para quando o teclado/mouse ficam parados, quando o "
-                "Windows bloqueia ou quando o jogo mostra “AINDA ESTÁ AÍ?”/aviso "
-                "de inatividade. O app não clica em CONTINUAR JOGANDO nesses casos."
+                "Com o movimento anti-AFK ligado o personagem anda, olha em "
+                "volta, agacha e pula em rajadas aleatórias durante a partida, "
+                "para não ficar parado enquanto o esquadrão farma. O farm ainda "
+                "para se o Windows bloquear a sessão ou se você desligar a "
+                "proteção de inatividade e o PC ficar sem ninguém."
             ),
             font=("Segoe UI", 8),
             fg=DIM,
@@ -1174,6 +1184,14 @@ class PirateFarmApp:
                 )
             else:
                 text += " Proteção de inatividade desativada."
+        if getattr(self, "ambient_var", None) is not None:
+            if self.ambient_var.get():
+                text += (
+                    " Movimento anti-AFK ligado: o personagem se mexe em "
+                    "rajadas aleatórias durante a partida."
+                )
+            else:
+                text += " Movimento anti-AFK desligado: o personagem fica parado."
         self.mode_hint_card.config(bg=card_bg, highlightbackground=border)
         self.mode_hint.config(text=text, bg=card_bg, fg=foreground)
 
@@ -1423,6 +1441,18 @@ class PirateFarmApp:
                 "ninguém por perto e aumentar o risco de ban.",
                 "warn",
             )
+        if self.config.ambient.enabled:
+            self._log(
+                "Movimento anti-AFK ligado: caminhada, olhada, agachar e pular "
+                "em rajadas de 35 a 75 s durante a partida.",
+                "success",
+            )
+        else:
+            self._log(
+                "Movimento anti-AFK desligado: o personagem fica parado e o "
+                "risco de punição por AFK sobe.",
+                "warn",
+            )
         if self.config.behavior.stop_on_afk_warning:
             self._log(
                 "Aviso de AFK: o farm para em “AINDA ESTÁ AÍ?” ou aviso de "
@@ -1568,6 +1598,7 @@ class PirateFarmApp:
         else:
             self.config.behavior.idle_stop_minutes = 0
         self.config.behavior.stop_on_afk_warning = bool(self.afk_var.get())
+        self.config.ambient.enabled = bool(self.ambient_var.get())
         return True
 
     def _apply_runtime_field(self) -> bool:
