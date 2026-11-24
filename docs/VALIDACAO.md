@@ -18,7 +18,7 @@ confiança dos templates do token, do resumo e do menu.
 - [ ] A janela está em **1920×1080** ou em uma resolução compatível.
 - [ ] A opção **Segundo plano** está marcada.
 - [ ] `dry_run` está `false` no `config.json`.
-- [ ] O app mostra **v1.3.0** no cabeçalho.
+- [ ] O app mostra **v1.4.0** no cabeçalho.
 - [ ] O campo **Limite (min)** está em `180` ou menos (evita sessões longas de AFK).
 - [ ] **Parar sem atividade** está marcado com `30` min (ou um valor menor).
 - [ ] **Parar em aviso de AFK** está marcado.
